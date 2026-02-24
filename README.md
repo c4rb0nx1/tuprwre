@@ -1,76 +1,74 @@
-# tuprwre
+# tuprwre: The AI Agent Sandbox
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-tuprwre is a high-performance CLI tool that provides a safe environment for executing shell scripts (e.g., `curl -L script.sh | bash`). It sandboxes the installation inside a Docker container and generates lightweight shim scripts on the host for transparent execution.
+**Stop AI Agents from nuking your host machine.**
 
-## The Problem
+`tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (Claude Code, SWE-agent, OpenDevin, Cursor). It allows agents to install dependencies and run tools in isolated Docker containers while maintaining transparent access to your host's files.
 
-You want to install a CLI tool from a script:
+## The Problem: The "Agentic" Security Gap
+
+AI agents are powerful, but they are also dangerous. When you give an agent shell access, you are giving it the keys to your kingdom.
+
+- **Arbitrary Execution:** If an agent decides it needs a tool and runs `npm install -g some-package`, that package (and its post-install scripts) runs with your user's privileges on your host.
+- **System Pollution:** Agents often install dozens of dependencies, leaving your host machine cluttered with global binaries and libraries you didn't ask for.
+- **The VM Dilemma:** Full Virtual Machines are secure but heavy. They block the agent from easily reading/writing your local project files, breaking the developer experience.
+
+## The Solution: Action-Level Sandboxing
+
+`tuprwre` intercepts dangerous installation commands and traps them in ephemeral Docker containers. It then generates transparent **shims** on your host that proxy execution back into the container.
+
+The agent *thinks* it's working on your host, but the tools it installs are safely trapped.
+
+### Core Features
+
+- **Action-Level Sandboxing:** Automatically intercepts `npm`, `apt`, `pip`, `curl`, and other installation vectors.
+- **Host Context Mapping:** Sandboxed tools automatically mount your current directory (`$PWD`) and map your host UID/GID. Files created by the agent are owned by *you*, not root.
+- **Discovery Engine:** `tuprwre` uses Docker diffing to automatically detect exactly what the agent installed and exposes only those new binaries to the host.
+- **Zero Latency (Almost):** Designed for speed, so the agent doesn't time out waiting for container overhead.
+
+## Usage: The `tuprwre shell`
+
+The easiest way to protect yourself is to drop the agent into a `tuprwre shell`.
+
 ```bash
-curl -L https://example.com/install.sh | bash
+# Start a protected shell
+tuprwre shell
 ```
 
-**Concerns:**
-- The script could do anything to your system
-- It might install who-knows-what binaries
-- Cleanup is difficult
-
-## The Solution
-
-tuprwre runs the installation in an isolated Docker container, commits the result to an image, discovers what was installed, and generates shims so the tool works transparently:
+Inside this shell, any attempt to install global packages or modify the system is intercepted.
 
 ```bash
-# One-time installation (safe!)
-tuprwre install --base-image ubuntu:22.04 -- \
-  "curl -L https://kimi.dev/install.sh | bash"
+# The agent tries to install a tool
+$ npm install -g rimraf
 
-# Then use it like normal
-kimi --version    # Runs kimi from the sandboxed container
-kimi myfile.txt   # Transparent execution with file access
+# tuprwre intercepts:
+# 1. Spins up a container
+# 2. Runs the install
+# 3. Commits the image
+# 4. Creates a shim at ~/.tuprwre/bin/rimraf
+
+# Now 'rimraf' works, but it's running in Docker!
+$ rimraf ./dist
 ```
 
-## How It Works
+## System Prompt for Agents
 
-### Phase 1: Installation
-```
-tuprwre install -- "curl -L https://example.com/tool.sh | bash"
-        │
-        ▼
-┌───────────────────┐
-│ Create container  │  Ephemeral Docker container from base image
-│ Run install script│  Script executes in isolated environment
-│ Commit to image   │  State preserved as new Docker image
-└─────────┬─────────┘
-          ▼
-```
+To get the best results, add this to your agent's instructions (e.g., `.cursorrules`, `AGENTS.md`, or your system prompt):
 
-### Phase 2: Discovery
-The tool analyzes the container to find new executables that were installed, filtering out system binaries.
+```markdown
+### Environment & Tool Installation
+This environment is protected by `tuprwre`. If you need to install any system-level dependencies, CLI tools, or global packages (npm, pip, apt), you MUST use the following command:
 
-### Phase 3: Shim Generation
-Lightweight proxy scripts are created in `~/.tuprwre/bin/`:
 ```bash
-#!/bin/bash
-exec tuprwre run --image "tool:latest" -- "tool" "$@"
+tuprwre install --base-image ubuntu:22.04 -- "YOUR_INSTALL_COMMAND"
 ```
 
-### Phase 4: Transparent Execution
-```
-kimi --version                    # User types command
-        │
-        ▼
-~/.tuprwre/bin/kimi              # Shim intercepts
-        │
-        ▼
-tuprwre run --image kimi -- …    # Proxies to container
-        │
-        ▼
-┌───────────────────┐
-│ Docker container  │  Starts from committed image
-│ kimi --version    │  Runs with stdin/stdout proxy
-└───────────────────┘
+Example:
+`tuprwre install -- "npm install -g @aws-amplify/cli"`
+
+Do NOT attempt to install tools directly to the host. Once installed via `tuprwre`, the tool will be available in your PATH automatically.
 ```
 
 ## Installation
@@ -83,98 +81,21 @@ make build
 make install
 ```
 
-Or directly:
-```bash
-go install github.com/username/tuprwre/cmd/tuprwre@latest
-```
-
 ### Setup
-
 Add the shim directory to your PATH:
 ```bash
 echo 'export PATH="$HOME/.tuprwre/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-## Usage
+## How It Works
 
-### Install a tool
-```bash
-tuprwre install --base-image ubuntu:22.04 -- \
-  "curl -L https://kimi.dev/install.sh | bash"
-```
+1. **Intercept**: `tuprwre` catches the installation command.
+2. **Isolate**: The command runs inside a Docker container based on a clean image.
+3. **Discover**: `tuprwre` compares the container state to the base image to find new binaries.
+4. **Shim**: Lightweight proxy scripts are created on the host. When called, they `docker run` the tool with the host's `$PWD` mounted.
 
-Options:
-- `--base-image, -i`: Base Docker image (default: ubuntu:22.04)
-- `--container, -c`: Use existing container instead of creating new
-- `--image, -n`: Name for the committed image (auto-generated if not provided)
-- `--force, -f`: Overwrite existing shims
-
-### Run a sandboxed binary (internal use)
-```bash
-tuprwre run --image kimi:latest -- kimi --help
-```
-
-Options:
-- `--image, -i`: Docker image to run (required)
-- `--container, -c`: Use existing container
-- `--workdir, -w`: Working directory inside container
-- `--env, -e`: Environment variables (KEY=VALUE)
-- `--volume, -v`: Volume mounts (host:container)
-- `--runtime, -r`: Container runtime (docker|containerd)
-
-## Architecture
-
-tuprwre consists of four main phases:
-
-1. **Installation**: Runs scripts in ephemeral containers and commits state
-2. **Discovery**: Finds new binaries by comparing against base image
-3. **Shim Generation**: Creates proxy scripts for transparent execution
-4. **Execution**: Proxies I/O between host and sandboxed container
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
-
-## Project Structure
-
-```
-cmd/tuprwre/       CLI commands (cobra)
-internal/
-  config/          Configuration management
-  sandbox/         Docker/container runtime
-  discovery/       Binary discovery
-  shim/            Shim generation
-```
-
-## Development
-
-```bash
-# Build
-make build
-
-# Run tests
-make test
-
-# Development build (faster, no optimization)
-make dev
-
-# Format code
-make fmt
-
-# Run linter
-make lint
-```
-
-## Future Roadmap
-
-- **Containerd Support**: Faster container startup for reduced shim latency
-- **Shim Management**: `list`, `remove`, `update` commands
-- **Caching**: Layer caching and binary signature verification
-- **Configuration**: Per-shim environment and volume templates
+---
 
 ## License
-
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-Inspired by [syumai/sbx](https://github.com/syumai/sbx) - a macOS sandbox-exec wrapper that demonstrated the power of transparent sandboxing.
