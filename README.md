@@ -5,6 +5,9 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+> **Warning**
+> `tuprwre` is early-stage experimental software. Expect breaking changes, missing features, and rough edges.
+
 `tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (**Claude Code**, **SWE-agent**, **OpenDevin**, **Cursor**). It allows agents to install dependencies and run tools in isolated, persistent Docker environments while maintaining transparent access to your host's files.
 
 ---
