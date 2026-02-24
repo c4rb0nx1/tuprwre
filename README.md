@@ -5,8 +5,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-
-`tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (**Claude Code**, **SWE-agent**, **OpenDevin**, **Cursor**). It allows agents to install dependencies and run tools in isolated Docker containers while maintaining transparent access to your host's files.
+`tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (**Claude Code**, **SWE-agent**, **OpenDevin**, **Cursor**). It allows agents to install dependencies and run tools in isolated, persistent Docker environments while maintaining transparent access to your host's files.
 
 ---
 
@@ -20,12 +19,12 @@ AI agents are powerful, but giving them shell access is like handing over the ke
 
 ## The Solution: Action-Level Sandboxing
 
-`tuprwre` intercepts dangerous commands and traps them in ephemeral Docker containers, generating transparent **shims** that proxy execution back to the container.
+`tuprwre` intercepts dangerous commands and traps them in Docker containers, generating transparent **shims** that proxy execution back to the container. 
 
-*   **Action-Level Interception:** Automatically catches `npm`, `apt`, `pip`, `curl`, and other installation vectors.
-*   **Host Context Mapping:** Tools run in Docker but see your current directory (`$PWD`). Files created are owned by *you*, not root.
+*   **Action-Level Interception:** Catch `npm`, `apt`, `pip`, and other installation vectors automatically via `tuprwre shell`.
+*   **Stateful Sessions:** Tools installed across multiple commands co-exist in the same persistent container environment using `--session`.
+*   **Host Context Mapping:** Sandboxed tools see your current directory (`$PWD`), and files created are owned by *you*, not root.
 *   **Smart Discovery:** Automatically detects new binaries installed by the agent and exposes *only* those to the host.
-*   **Zero Latency:** Optimized for speed so agents don't time out.
 
 ---
 
@@ -38,28 +37,31 @@ To ensure your AI agent uses `tuprwre` correctly, add the following to your **`.
 ```markdown
 ### Environment & Tool Installation (tuprwre)
 
-This environment is protected by `tuprwre`. You cannot install global packages directly.
+This environment is protected by `tuprwre`. You cannot install global packages directly to the host.
 
 **Rules:**
 1.  If you need to install system-level dependencies, CLI tools, or global packages (npm, pip, apt), you **MUST** use `tuprwre install`.
 2.  Do NOT run `npm install -g`, `pip install`, or `apt-get install` directly.
+3.  You should use the `--session` flag to group related tool installations into the same persistent container.
 
 **Command Format:**
-tuprwre install --base-image <image> -- "<install_command>"
+tuprwre install --session <session-id> --base-image <image> -- "<install_command>"
 
 **Examples:**
-# Install AWS CLI
-tuprwre install --base-image ubuntu:22.04 -- "apt-get update && apt-get install -y awscli"
+# Install AWS CLI into a session named "aws-task"
+tuprwre install --session aws-task --base-image ubuntu:22.04 -- "apt-get update && apt-get install -y awscli"
 
-# Install a global Node package
-tuprwre install -- "npm install -g @aws-amplify/cli"
+# Install a Node package into the same session
+tuprwre install --session aws-task -- "npm install -g @aws-amplify/cli"
 
-Once installed, the tool will be available in your PATH automatically.
+Once installed, the tool will be available in your PATH automatically, but it will execute safely inside the sandbox.
 ```
 
 ---
 
 ## Usage
+
+### 1. The Protected Shell (Recommended)
 
 The easiest way to protect yourself is to drop the agent into a `tuprwre shell`.
 
@@ -68,19 +70,27 @@ The easiest way to protect yourself is to drop the agent into a `tuprwre shell`.
 tuprwre shell
 ```
 
-Inside this shell, dangerous commands are intercepted:
+Inside this shell, dangerous commands are strictly blocked to enforce sandbox usage:
 
 ```bash
-# 1. Agent tries to install a tool
 $ npm install -g rimraf
+[tuprwre] Command blocked: npm install -g rimraf
+[tuprwre] You are running inside a protected host environment.
+[tuprwre] To install tools or dependencies safely, you MUST use the sandbox:
 
-# 2. tuprwre intercepts & isolates:
-#    [Host] -> [Docker Container] -> [Install] -> [Commit]
+    tuprwre install --session "b4c8801c" -- "npm install -g rimraf"
+```
 
-# 3. A shim is created at ~/.tuprwre/bin/rimraf
+### 2. Manual Installation
 
-# 4. Now 'rimraf' works, but it runs safely in Docker!
-$ rimraf ./dist
+You can manually sandbox tools. The discovery engine will diff the container, find what was installed, and generate the shims.
+
+```bash
+# One-time installation (safe!)
+tuprwre install --base-image ubuntu:22.04 -- "apt install -y jq"
+
+# Then use it like normal on your host!
+jq .status my_host_file.json 
 ```
 
 ---
@@ -96,14 +106,14 @@ $ rimraf ./dist
        v                                              v
 +----------------+      (3) Discover        +---------------------+
 |  Host System   | <----------------------- |  Docker Container   |
-| (~/.tuprwre)   |    (New Binaries)        |  (Ephemeral)        |
+| (~/.tuprwre)   |    (New Binaries)        |  (Session Image)    |
 +----------------+                          +---------------------+
 ```
 
-1.  **Intercept**: `tuprwre` catches the installation command.
-2.  **Isolate**: The command runs inside a clean Docker container.
-3.  **Discover**: `tuprwre` diffs the container to find new binaries.
-4.  **Shim**: Lightweight proxy scripts are created on the host to run the tool.
+1.  **Intercept**: `tuprwre shell` traps the installation command and blocks it.
+2.  **Isolate**: The agent uses `tuprwre install` to run the command inside a Docker container.
+3.  **Discover**: `tuprwre` diffs the container against its baseline to find new binaries.
+4.  **Shim**: Lightweight proxy scripts are created in `~/.tuprwre/bin` to transparently route host commands back into the sandbox.
 
 ---
 
@@ -112,10 +122,10 @@ $ rimraf ./dist
 ### From Source
 
 ```bash
-git clone https://github.com/username/tuprwre
+git clone https://github.com/c4rb0nx1/tuprwre
 cd tuprwre
-make build
-make install
+go build -o tuprwre ./cmd/tuprwre
+sudo cp ./tuprwre /usr/local/bin/tuprwre
 ```
 
 ### Setup
