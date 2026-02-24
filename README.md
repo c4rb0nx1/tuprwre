@@ -1,11 +1,10 @@
 # tuprwre
 
-### The AI Agent Sandbox
+> **Stop AI agents from nuking your host machine. Give them shell access without giving them the keys to your kingdom.**
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Stop AI Agents from nuking your host machine.**
 
 `tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (**Claude Code**, **SWE-agent**, **OpenDevin**, **Cursor**). It allows agents to install dependencies and run tools in isolated Docker containers while maintaining transparent access to your host's files.
 
