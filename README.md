@@ -1,6 +1,6 @@
 # tuprwre
 
-### 🛡️ The AI Agent Sandbox 🤖
+### The AI Agent Sandbox
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -11,33 +11,33 @@
 
 ---
 
-## 💥 The Problem: The "Agentic" Security Gap
+## The Problem: The "Agentic" Security Gap
 
 AI agents are powerful, but giving them shell access is like handing over the keys to your kingdom.
 
-*   ❌ **Arbitrary Execution:** If an agent runs `npm install -g malicious-package`, it executes with *your* privileges.
-*   ❌ **System Pollution:** Agents clutter your host with global binaries, libraries, and config files you didn't ask for.
-*   ❌ **The VM Dilemma:** Full VMs are secure but heavy. They isolate the agent *too much*, breaking access to local project files.
+*   **Arbitrary Execution:** If an agent runs `npm install -g malicious-package`, it executes with *your* privileges.
+*   **System Pollution:** Agents clutter your host with global binaries, libraries, and config files you didn't ask for.
+*   **The VM Dilemma:** Full VMs are secure but heavy. They isolate the agent *too much*, breaking access to local project files.
 
-## 🛡️ The Solution: Action-Level Sandboxing
+## The Solution: Action-Level Sandboxing
 
 `tuprwre` intercepts dangerous commands and traps them in ephemeral Docker containers, generating transparent **shims** that proxy execution back to the container.
 
-*   ✅ **Action-Level Interception:** Automatically catches `npm`, `apt`, `pip`, `curl`, and other installation vectors.
-*   ✅ **Host Context Mapping:** Tools run in Docker but see your current directory (`$PWD`). Files created are owned by *you*, not root.
-*   ✅ **Smart Discovery:** Automatically detects new binaries installed by the agent and exposes *only* those to the host.
-*   ✅ **Zero Latency:** Optimized for speed so agents don't time out.
+*   **Action-Level Interception:** Automatically catches `npm`, `apt`, `pip`, `curl`, and other installation vectors.
+*   **Host Context Mapping:** Tools run in Docker but see your current directory (`$PWD`). Files created are owned by *you*, not root.
+*   **Smart Discovery:** Automatically detects new binaries installed by the agent and exposes *only* those to the host.
+*   **Zero Latency:** Optimized for speed so agents don't time out.
 
 ---
 
-## 📋 System Prompt for Agents
+## System Prompt for Agents
 
 To ensure your AI agent uses `tuprwre` correctly, add the following to your **`.cursorrules`**, **`AGENTS.md`**, or system prompt.
 
 > **Copy & Paste this block:**
 
 ```markdown
-### 🛡️ Environment & Tool Installation (tuprwre)
+### Environment & Tool Installation (tuprwre)
 
 This environment is protected by `tuprwre`. You cannot install global packages directly.
 
@@ -60,7 +60,7 @@ Once installed, the tool will be available in your PATH automatically.
 
 ---
 
-## 🚀 Usage
+## Usage
 
 The easiest way to protect yourself is to drop the agent into a `tuprwre shell`.
 
@@ -86,7 +86,7 @@ $ rimraf ./dist
 
 ---
 
-## ⚙️ How It Works
+## How It Works
 
 ```text
 +----------------+      (1) Intercept       +---------------------+
@@ -108,7 +108,7 @@ $ rimraf ./dist
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### From Source
 
@@ -130,6 +130,6 @@ source ~/.bashrc
 
 ---
 
-## 📄 License
+## License
 
 MIT License - see [LICENSE](LICENSE) for details.
