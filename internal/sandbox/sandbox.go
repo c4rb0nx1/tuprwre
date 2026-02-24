@@ -348,17 +348,13 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 		hostConfig.Binds = opts.Volumes
 	}
 
-	// Create and start container
+	// Create container (but don't start it yet)
 	resp, err := d.client.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {
 		return 1, fmt.Errorf("failed to create container: %w", err)
 	}
 
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return 1, fmt.Errorf("failed to start container: %w", err)
-	}
-
-	// Attach to container
+	// Attach to container BEFORE starting to avoid race condition
 	attachOptions := container.AttachOptions{
 		Stream: true,
 		Stdout: true,
@@ -372,6 +368,13 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 	}
 	defer attachResp.Close()
 
+	// Start goroutine to stream stdout/stderr BEFORE container starts
+	outputDone := make(chan struct{})
+	go func() {
+		stdcopy.StdCopy(opts.Stdout, opts.Stderr, attachResp.Reader)
+		close(outputDone)
+	}()
+
 	// Stream stdin if provided
 	if opts.Stdin != nil {
 		go func() {
@@ -380,10 +383,12 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 		}()
 	}
 
-	// Stream stdout/stderr
-	stdcopy.StdCopy(opts.Stdout, opts.Stderr, attachResp.Reader)
+	// NOW start the container (after attach is ready)
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return 1, fmt.Errorf("failed to start container: %w", err)
+	}
 
-	// Wait for container
+	// Wait for container to finish
 	statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 
 	select {
@@ -392,6 +397,7 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 			return 1, fmt.Errorf("container wait error: %w", err)
 		}
 	case status := <-statusCh:
+		// Removed outputDone lock to prevent terminal hangs
 		return int(status.StatusCode), nil
 	}
 
