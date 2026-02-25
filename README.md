@@ -10,6 +10,11 @@
 
 `tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (**Claude Code**, **SWE-agent**, **OpenDevin**, **Cursor**). It allows agents to install dependencies and run tools in isolated, persistent Docker environments while maintaining transparent access to your host's files.
 
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/bc8fd436-7576-46ee-a101-3fcd6bbd1cf7" width="100%" controls autoplay loop muted></video>
+</div>
+
+
 ---
 
 ## The Problem: The "Agentic" Security Gap
