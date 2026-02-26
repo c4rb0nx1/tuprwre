@@ -15,6 +15,9 @@ var (
 	runWorkDir        string
 	runEnv            []string
 	runVolumes        []string
+	runDebugIO        bool
+	runDebugIOJSON    bool
+	runCaptureFile    string
 	// For Containerd migration (future)
 	runRuntime string
 )
@@ -46,6 +49,9 @@ func init() {
 	runCmd.Flags().StringArrayVarP(&runEnv, "env", "e", []string{}, "Environment variables to pass (KEY=VALUE)")
 	runCmd.Flags().StringArrayVarP(&runVolumes, "volume", "v", []string{}, "Volume mounts (host:container)")
 	runCmd.Flags().StringVarP(&runRuntime, "runtime", "r", "docker", "Container runtime (docker|containerd)")
+	runCmd.Flags().BoolVar(&runDebugIO, "debug-io", false, "Print human-readable container I/O lifecycle diagnostics")
+	runCmd.Flags().BoolVar(&runDebugIOJSON, "debug-io-json", false, "Emit container I/O diagnostics as NDJSON (optional JSON mode)")
+	runCmd.Flags().StringVar(&runCaptureFile, "capture-file", "", "Write combined stdout/stderr stream to a file")
 
 	_ = runCmd.MarkFlagRequired("image")
 }
@@ -96,6 +102,9 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
+		DebugIO:     runDebugIO,
+		DebugIOJSON: runDebugIOJSON,
+		CaptureFile: runCaptureFile,
 	}
 
 	// Execute in sandbox

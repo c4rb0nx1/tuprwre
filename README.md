@@ -1,14 +1,14 @@
 # tuprwre
 
-> **Stop AI agents from nuking your host machine. Give them shell access without giving them the keys to your kingdom.**
+> **Stop AI agents from nuking your host machine.**
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > **Warning**
-> `tuprwre` is early-stage experimental software. Expect breaking changes, missing features, and rough edges.
+> `tuprwre` is in it's early age. Expect breaking changes, missing features, and rough edges.
 
-`tuprwre` is a high-performance sandbox designed specifically for autonomous AI agents (**Claude Code**, **SWE-agent**, **OpenDevin**, **Cursor**). It allows agents to install dependencies and run tools in isolated, persistent Docker environments while maintaining transparent access to your host's files.
+`tuprwre` is a high-performance sandbox designed specifically for AI agents (**Claude Code**, **OpenCode**, **Codex**, **SWE-agent**, **Cursor**, **Antigravity** and much more). It allows agents to install dependencies and run tools in isolated, persistent Docker environments while maintaining transparent access to your host's files.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/bc8fd436-7576-46ee-a101-3fcd6bbd1cf7" width="100%" controls autoplay loop muted></video>
@@ -19,7 +19,7 @@
 
 ## The Problem: The "Agentic" Security Gap
 
-AI agents are powerful, but giving them shell access is like handing over the keys to your kingdom.
+AI agents are powerful, but giving them shell access might give them ability to destroy your peace in many ways.
 
 *   **Arbitrary Execution:** If an agent runs `npm install -g malicious-package`, it executes with *your* privileges.
 *   **System Pollution:** Agents clutter your host with global binaries, libraries, and config files you didn't ask for.
@@ -27,7 +27,7 @@ AI agents are powerful, but giving them shell access is like handing over the ke
 
 ## The Solution: Action-Level Sandboxing
 
-`tuprwre` intercepts dangerous commands and traps them in Docker containers, generating transparent **shims** that proxy execution back to the container. 
+`tuprwre` intercepts dangerous commands via `tuprwre shell` and traps them in Docker containers, generating transparent **shims** that proxy execution back to the container. 
 
 *   **Action-Level Interception:** Catch `npm`, `apt`, `pip`, and other installation vectors automatically via `tuprwre shell`.
 *   **Stateful Sessions:** Tools installed across multiple commands co-exist in the same persistent container environment using `--session`.
@@ -101,6 +101,50 @@ tuprwre install --base-image ubuntu:22.04 -- "apt install -y jq"
 jq .status my_host_file.json 
 ```
 
+### 3. I/O Diagnostics for Sandbox Runs
+
+When you need to debug stream behavior between the host and sandbox container, use `tuprwre run` diagnostics flags:
+
+* `--debug-io`: Prints human-readable lifecycle events for stdin/stdout/stderr forwarding.
+* `--capture-file <path>`: Writes the combined stdout/stderr stream to a local file for later inspection.
+* `--debug-io-json`: Optional JSON mode (NDJSON) for machine-readable diagnostics output.
+
+```bash
+# Human-readable diagnostics while running a shim target
+tuprwre run --image ubuntu:22.04 --debug-io -- bash -lc "echo ok && sleep 1 && echo done"
+
+# Capture command output to a file while still streaming to terminal
+tuprwre run --image ubuntu:22.04 --capture-file /tmp/tuprwre.out -- bash -lc "printf 'hello\n'"
+
+# JSON diagnostics for tooling/parsers
+tuprwre run --image ubuntu:22.04 --debug-io-json -- bash -lc "echo ping"
+```
+
+Sample `--debug-io` output:
+
+```text
+[tuprwre][io] start: binary=bash args=[-lc echo ok]
+[tuprwre][io] stream: stdout open
+ok
+[tuprwre][io] stream: stdout closed
+[tuprwre][io] done: exit_code=0
+```
+
+#### Troubleshooting Workflow
+
+1. **Empty output**
+   - Run again with `--debug-io` to confirm stdout/stderr streams opened and closed.
+   - Add `--capture-file /tmp/tuprwre.out` to verify whether output was produced but not displayed by your client.
+   - If diagnostics show stream activity but your tool still displays nothing, inspect client-side parsing/log handling.
+
+2. **Hang diagnosis**
+   - Re-run with `--debug-io` and check which stream never closes.
+   - Use `--debug-io-json` when integrating with automation so you can detect stalled phases programmatically.
+   - Confirm the command itself is not waiting on stdin or an interactive prompt.
+
+> **Caution**
+> Diagnostics can include command arguments and stream metadata. Avoid logging secrets, and do not capture or share sensitive environment values.
+
 ---
 
 ## How It Works
@@ -126,6 +170,34 @@ jq .status my_host_file.json
 ---
 
 ## Installation
+
+### Using Makefile (Recommended)
+
+```bash
+git clone https://github.com/c4rb0nx1/tuprwre
+cd tuprwre
+
+# Show available development targets
+make help
+
+# Build the CLI binary at ./build/tuprwre
+make build
+
+# Optional: run test suite
+make test
+
+# Install to GOPATH/bin (falls back to ~/go/bin)
+make install
+```
+
+Common development targets:
+
+- `make deps` - download and tidy Go modules
+- `make build` - build production binary in `./build/`
+- `make dev` - build development binary (without stripped flags)
+- `make test` - run tests
+- `make stress-output-race` - run headless output stress script
+- `make clean` - remove build/test artifacts
 
 ### From Source
 

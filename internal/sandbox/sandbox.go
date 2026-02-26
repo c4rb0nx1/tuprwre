@@ -3,6 +3,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -38,6 +39,59 @@ type RunOptions struct {
 	Stdin       io.Reader
 	Stdout      io.Writer
 	Stderr      io.Writer
+	DebugIO     bool
+	DebugIOJSON bool
+	CaptureFile string
+}
+
+type runIODiagnostics struct {
+	textEnabled bool
+	jsonEnabled bool
+	start       time.Time
+	writer      io.Writer
+	runID       string
+	containerID string
+}
+
+type runIODiagnosticEvent struct {
+	Timestamp   string         `json:"timestamp"`
+	RunID       string         `json:"run_id"`
+	Event       string         `json:"event"`
+	ElapsedMs   int64          `json:"elapsed_ms"`
+	ContainerID string         `json:"container_id,omitempty"`
+	Details     map[string]any `json:"details,omitempty"`
+}
+
+func (d runIODiagnostics) event(name string) {
+	d.eventWithDetails(name, nil)
+}
+
+func (d runIODiagnostics) eventWithDetails(name string, details map[string]any) {
+	if (!d.textEnabled && !d.jsonEnabled) || d.writer == nil {
+		return
+	}
+
+	elapsedMs := time.Since(d.start).Milliseconds()
+
+	if d.textEnabled {
+		_, _ = fmt.Fprintf(d.writer, "[tuprwre][debug-io] +%dms %s\n", elapsedMs, name)
+	}
+
+	if d.jsonEnabled {
+		event := runIODiagnosticEvent{
+			Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+			RunID:       d.runID,
+			Event:       name,
+			ElapsedMs:   elapsedMs,
+			ContainerID: d.containerID,
+			Details:     details,
+		}
+
+		payload, err := json.Marshal(event)
+		if err == nil {
+			_, _ = fmt.Fprintf(d.writer, "%s\n", payload)
+		}
+	}
 }
 
 // New creates a new DockerRuntime instance.
@@ -131,7 +185,7 @@ func (d *DockerRuntime) CreateAndRunContainer(ctx context.Context, baseImage, co
 
 	containerID := resp.ID
 
-	exitCode, err := d.runAttachedAndDrain(ctx, resp.ID, nil, os.Stdout, os.Stderr)
+	exitCode, err := d.runAttachedAndDrain(ctx, resp.ID, nil, os.Stdout, os.Stderr, runIODiagnostics{})
 	if err != nil {
 		return containerID, err
 	}
@@ -142,7 +196,9 @@ func (d *DockerRuntime) CreateAndRunContainer(ctx context.Context, baseImage, co
 	return containerID, nil
 }
 
-func (d *DockerRuntime) runAttachedAndDrain(ctx context.Context, containerID string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+func (d *DockerRuntime) runAttachedAndDrain(ctx context.Context, containerID string, stdin io.Reader, stdout, stderr io.Writer, diag runIODiagnostics) (int, error) {
+	diag.containerID = containerID
+
 	attachOptions := container.AttachOptions{
 		Stream: true,
 		Stdout: true,
@@ -154,6 +210,7 @@ func (d *DockerRuntime) runAttachedAndDrain(ctx context.Context, containerID str
 	if err != nil {
 		return 1, fmt.Errorf("failed to attach to container: %w", err)
 	}
+	diag.event("attach")
 
 	var closeAttachOnce sync.Once
 	closeAttach := func() {
@@ -175,18 +232,29 @@ func (d *DockerRuntime) runAttachedAndDrain(ctx context.Context, containerID str
 		close(outputDone)
 	}()
 
-	waitForDrainAfterClose := func() {
-		closeAttach()
-		<-outputDone
+	var drainOnce sync.Once
+	waitForDrain := func() {
+		drainOnce.Do(func() {
+			<-outputDone
+			diag.event("stream-eof")
+		})
 	}
 
-	defer waitForDrainAfterClose()
+	forceCloseAndDrain := func() {
+		closeAttach()
+		waitForDrain()
+	}
 
-	statusCh, errCh := d.client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	defer forceCloseAndDrain()
+
+	statusCh, errCh := d.client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
+	diag.event("wait-registered")
 
 	if err := d.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		forceCloseAndDrain()
 		return 1, fmt.Errorf("failed to start container: %w", err)
 	}
+	diag.event("start")
 
 	if stdin != nil {
 		go func() {
@@ -199,18 +267,36 @@ func (d *DockerRuntime) runAttachedAndDrain(ctx context.Context, containerID str
 	// (1) Attach happens before start so no early output is lost.
 	// (2) Wait registration happens before start so fast exits are observed.
 	// (3) Return happens only after stream EOF, or after explicit cancellation cleanup closes attach.
-	select {
-	case waitErr := <-errCh:
-		if waitErr != nil {
-			closeAttach()
-			<-outputDone
-			return 1, fmt.Errorf("container wait error: %w", waitErr)
+	for {
+		select {
+		case waitErr, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				if statusCh == nil {
+					forceCloseAndDrain()
+					return 1, fmt.Errorf("container wait channels closed without status")
+				}
+				continue
+			}
+			if waitErr != nil {
+				diag.event("wait-exit")
+				forceCloseAndDrain()
+				return 1, fmt.Errorf("container wait error: %w", waitErr)
+			}
+			continue
+		case status, ok := <-statusCh:
+			if !ok {
+				statusCh = nil
+				if errCh == nil {
+					forceCloseAndDrain()
+					return 1, fmt.Errorf("container wait channels closed without status")
+				}
+				continue
+			}
+			diag.event("wait-exit")
+			waitForDrain()
+			return int(status.StatusCode), nil
 		}
-		<-outputDone
-		return 0, nil
-	case status := <-statusCh:
-		<-outputDone
-		return int(status.StatusCode), nil
 	}
 }
 
@@ -358,6 +444,17 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 		return 1, err
 	}
 
+	diag := runIODiagnostics{
+		textEnabled: opts.DebugIO,
+		jsonEnabled: opts.DebugIOJSON,
+		start:       time.Now(),
+		writer:      opts.Stderr,
+		runID:       uuid.NewString(),
+	}
+	if (diag.textEnabled || diag.jsonEnabled) && diag.writer == nil {
+		diag.writer = os.Stderr
+	}
+
 	// Pull image if needed
 	if err := d.PullImage(ctx, opts.Image); err != nil {
 		return 1, err
@@ -400,8 +497,15 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 	if err != nil {
 		return 1, fmt.Errorf("failed to create container: %w", err)
 	}
+	diag.containerID = resp.ID
+	diag.event("create")
 
+	var captureFile *os.File
 	defer func() {
+		if captureFile != nil {
+			_ = captureFile.Close()
+		}
+		diag.event("cleanup")
 		removeOptions := container.RemoveOptions{
 			Force:         true,
 			RemoveVolumes: true,
@@ -409,7 +513,26 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 		_ = d.client.ContainerRemove(context.Background(), resp.ID, removeOptions)
 	}()
 
-	return d.runAttachedAndDrain(ctx, resp.ID, opts.Stdin, opts.Stdout, opts.Stderr)
+	stdout := opts.Stdout
+	stderr := opts.Stderr
+	if opts.CaptureFile != "" {
+		captureFile, err = os.Create(opts.CaptureFile)
+		if err != nil {
+			return 1, fmt.Errorf("failed to create capture file: %w", err)
+		}
+
+		if stdout == nil {
+			stdout = io.Discard
+		}
+		if stderr == nil {
+			stderr = io.Discard
+		}
+
+		stdout = io.MultiWriter(stdout, captureFile)
+		stderr = io.MultiWriter(stderr, captureFile)
+	}
+
+	return d.runAttachedAndDrain(ctx, resp.ID, opts.Stdin, stdout, stderr, diag)
 }
 
 // ListExecutables returns all executable files in the container's PATH.
