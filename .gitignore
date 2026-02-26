@@ -1,0 +1,5 @@
+# Local build artifacts
+/build/
+
+# Local compiled binary
+/tuprwre
