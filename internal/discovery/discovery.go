@@ -12,10 +12,10 @@ import (
 
 // Binary represents a discovered executable binary.
 type Binary struct {
-	// Name is the binary name (e.g., "kimi")
+	// Name is the binary name (e.g., "tool")
 	Name string
 
-	// Path is the full path inside the container (e.g., "/usr/local/bin/kimi")
+	// Path is the full path inside the container (e.g., "/usr/local/bin/tool")
 	Path string
 
 	// Version is the detected version (if available)

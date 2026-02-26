@@ -31,12 +31,12 @@ Phase 3: Commit the container state to a new image
 Phase 4: Discover new binaries by diffing PATH or filesystem
 Phase 5: Generate shim scripts in ~/.tuprwre/bin/`,
 	Example: `  # Install from a curl script
-  tuprwre install --base-image ubuntu:22.04 -- \
-    "curl -L https://kimi.dev/install.sh | bash"
+	  tuprwre install --base-image ubuntu:22.04 -- \
+	    "curl -fsSL https://example.com/install-tool.sh | bash"
 
-  # Install with specific output image name
-  tuprwre install --base-image alpine:latest --image kimi:latest -- \
-    "wget -O - https://kimi.dev/install.sh | sh"`,
+	  # Install with specific output image name
+	  tuprwre install --base-image alpine:latest --image toolset:latest -- \
+	    "wget -qO- https://example.com/install-tool.sh | sh"`,
 	RunE: runInstall,
 }
 
@@ -84,11 +84,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				docker.CleanupContainer(context.Background(), containerID)
 			}
 		}()
-if err != nil {
-return fmt.Errorf("installation failed: %w", err)
-}
-fmt.Printf("\nContainer finished successfully: %s\n", containerID)
-}
+		if err != nil {
+			return fmt.Errorf("installation failed: %w", err)
+		}
+		fmt.Printf("\nContainer finished successfully: %s\n", containerID)
+	}
 
 	// Phase 2: Commit container state
 	imageName := installImageName
@@ -100,7 +100,6 @@ fmt.Printf("\nContainer finished successfully: %s\n", containerID)
 	if err := docker.Commit(ctx, containerID, imageName); err != nil {
 		return fmt.Errorf("failed to commit container: %w", err)
 	}
-
 
 	// Phase 3: Discover binaries
 	fmt.Printf("Discovering installed binaries...\n")

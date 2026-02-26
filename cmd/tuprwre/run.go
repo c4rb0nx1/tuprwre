@@ -35,10 +35,10 @@ The shim passes through:
   - Current working directory context
   - Selected environment variables`,
 	Example: `  # Internal usage by shims:
-  tuprwre run --image kimi:latest -- kimi --version
+	  tuprwre run --image toolset:latest -- tool --version
 
-  # With volume mounts
-  tuprwre run --image kimi:latest -v $(pwd):/workspace -- kimi /workspace`,
+	  # With volume mounts
+	  tuprwre run --image toolset:latest -v $(pwd):/workspace -- tool /workspace`,
 	RunE: runSandboxed,
 }
 

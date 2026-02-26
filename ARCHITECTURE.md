@@ -16,7 +16,7 @@ The fundamental insight is that we can have the best of both worlds:
 │                                                                              │
 │   ┌──────────────┐     ┌──────────────────┐     ┌───────────────────────┐  │
 │   │ User types:  │────▶│ Shim script      │────▶│ tuprwre run           │  │
-│   │ "kimi"       │     │ (~/.tuprwre/bin)│     │ (proxy to Docker)     │  │
+│   │ "tool"       │     │ (~/.tuprwre/bin)│     │ (proxy to Docker)     │  │
 │   └──────────────┘     └──────────────────┘     └───────────┬───────────┘  │
 │                                                             │               │
 │                                                             ▼               │
@@ -30,8 +30,8 @@ The fundamental insight is that we can have the best of both worlds:
 │                           DOCKER CONTAINER                                   │
 │                                                                              │
 │   ┌──────────────────┐     ┌──────────────────────┐                         │
-│   │ Installed binary │────▶│ kimi / zellij / etc  │                         │
-│   │ (kimi)           │     └──────────────────────┘                         │
+│   │ Installed binary │────▶│ tool / helper / etc  │                         │
+│   │ (tool)           │     └──────────────────────┘                         │
 │   └──────────────────┘                                                      │
 │                                                                              │
 │   • stdin/stdout/stderr proxied transparently                               │
@@ -50,7 +50,7 @@ The fundamental insight is that we can have the best of both worlds:
 ```
 User Command:
   tuprwre install --base-image ubuntu:22.04 -- \
-    "curl -L https://kimi.dev/install.sh | bash"
+    "curl -fsSL https://example.com/install-tool.sh | bash"
 
 Flow:
   1. Create ephemeral container from base image
@@ -60,7 +60,7 @@ Flow:
      docker exec tuprwre-<uuid> sh -c "curl -L ... | bash"
 
   3. Commit container to new image
-     docker commit tuprwre-<uuid> tuprwre-kimi:20240221
+     docker commit tuprwre-<uuid> tuprwre-tool:20240221
 
   4. (Optional) Remove ephemeral container
      docker rm tuprwre-<uuid>
@@ -102,13 +102,13 @@ Flow:
 **Shim Template**:
 ```bash
 #!/bin/bash
-# Generated shim for kimi
-# Proxies execution to sandboxed container: tuprwre-kimi:latest
+# Generated shim for tool
+# Proxies execution to sandboxed container: tuprwre-tool:latest
 
 set -e
 
-IMAGE_NAME="tuprwre-kimi:latest"
-BINARY_NAME="kimi"
+IMAGE_NAME="tuprwre-tool:latest"
+BINARY_NAME="tool"
 
 # Forward all arguments to the sandboxed binary
 exec tuprwre run --image "${IMAGE_NAME}" -- "${BINARY_NAME}" "$@"
@@ -127,16 +127,16 @@ export PATH="$HOME/.tuprwre/bin:$PATH"
 **Purpose**: Proxy host invocations to the sandboxed container.
 
 ```
-User types: kimi --version
+User types: tool --version
 
-Shim executes: tuprwre run --image tuprwre-kimi:latest -- kimi --version
+Shim executes: tuprwre run --image tuprwre-tool:latest -- tool --version
 
 tuprwre run flow:
   1. Start container from image (or use existing)
   2. Mount current working directory for file access
   3. Pass through environment variables (selective)
   4. Forward stdin/stdout/stderr
-  5. Execute: kimi --version
+  5. Execute: tool --version
   6. Return exit code
 ```
 
