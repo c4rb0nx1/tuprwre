@@ -6,9 +6,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "0.0.5"
+
 var rootCmd = &cobra.Command{
-	Use:   "tuprwre",
-	Short: "Sandbox shell script installations with transparent execution",
+	Use:     "tuprwre",
+	Short:   "Sandbox shell script installations with transparent execution",
+	Version: version,
 	Long: `tuprwre provides a safe environment for executing shell scripts by running
 installations inside isolated Docker containers. It discovers installed binaries
 and generates lightweight shim scripts on the host for transparent execution.
@@ -33,7 +36,7 @@ func main() {
 }
 
 func init() {
-rootCmd.AddCommand(installCmd)
+	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(shellCmd)
 }
