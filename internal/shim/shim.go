@@ -27,9 +27,13 @@ set -e
 # tuprwre run configuration
 IMAGE_NAME="{{.ImageName}}"
 BINARY_NAME="{{.BinaryName}}"
+TUPRWRE_BIN="{{.TuprwrePath}}"
+if [ ! -x "${TUPRWRE_BIN}" ]; then
+  TUPRWRE_BIN="tuprwre"
+fi
 
 # Forward all arguments to the sandboxed binary
-exec tuprwre run --image "${IMAGE_NAME}" -- "${BINARY_NAME}" "$@"
+exec "${TUPRWRE_BIN}" run --image "${IMAGE_NAME}" -- "${BINARY_NAME}" "$@"
 `
 
 // containerdShimTemplate is the future template for containerd runtime.
@@ -42,14 +46,19 @@ set -e
 # tuprwre run configuration with containerd
 IMAGE_NAME="{{.ImageName}}"
 BINARY_NAME="{{.BinaryName}}"
+TUPRWRE_BIN="{{.TuprwrePath}}"
+if [ ! -x "${TUPRWRE_BIN}" ]; then
+  TUPRWRE_BIN="tuprwre"
+fi
 
 # Forward all arguments to the sandboxed binary
-exec tuprwre run --runtime containerd --image "${IMAGE_NAME}" -- "${BINARY_NAME}" "$@"
+exec "${TUPRWRE_BIN}" run --runtime containerd --image "${IMAGE_NAME}" -- "${BINARY_NAME}" "$@"
 `
 
 type shimData struct {
-	BinaryName string
-	ImageName  string
+	BinaryName  string
+	ImageName   string
+	TuprwrePath string
 }
 
 // NewGenerator creates a new shim Generator.
@@ -89,8 +98,19 @@ func (g *Generator) Create(binary discovery.Binary, imageName string, force bool
 
 	// Execute template
 	data := shimData{
-		BinaryName: binary.Name,
-		ImageName:  imageName,
+		BinaryName:  binary.Name,
+		ImageName:   imageName,
+		TuprwrePath: "tuprwre",
+	}
+
+	execPath, execErr := os.Executable()
+	if execErr == nil {
+		resolvedPath, resolveErr := filepath.EvalSymlinks(execPath)
+		if resolveErr == nil {
+			data.TuprwrePath = resolvedPath
+		} else {
+			data.TuprwrePath = execPath
+		}
 	}
 	if err := tmpl.Execute(file, data); err != nil {
 		return fmt.Errorf("failed to write shim: %w", err)

@@ -1,4 +1,4 @@
-.PHONY: build test clean install fmt lint
+.PHONY: build test clean install fmt lint stress-output-race
 
 # Binary name
 BINARY_NAME=tuprwre
@@ -46,6 +46,9 @@ build-all:
 test:
 	@echo "Running tests..."
 	$(GOTEST) -v ./...
+
+stress-output-race:
+	@./scripts/stress-run-output-race.sh ubuntu:22.04 50
 
 # Run tests with coverage
 test-coverage:

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -130,46 +131,87 @@ func (d *DockerRuntime) CreateAndRunContainer(ctx context.Context, baseImage, co
 
 	containerID := resp.ID
 
-	// Start the container
-	if err := d.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("failed to start container: %w", err)
+	exitCode, err := d.runAttachedAndDrain(ctx, resp.ID, nil, os.Stdout, os.Stderr)
+	if err != nil {
+		return containerID, err
+	}
+	if exitCode != 0 {
+		return containerID, fmt.Errorf("container exited with code %d", exitCode)
 	}
 
-	// Wait for container to finish and stream output
-	statusCh, errCh := d.client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	return containerID, nil
+}
 
-	// Attach to container to stream output
+func (d *DockerRuntime) runAttachedAndDrain(ctx context.Context, containerID string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	attachOptions := container.AttachOptions{
 		Stream: true,
 		Stdout: true,
 		Stderr: true,
+		Stdin:  stdin != nil,
 	}
 
 	attachResp, err := d.client.ContainerAttach(ctx, containerID, attachOptions)
 	if err != nil {
-		return "", fmt.Errorf("failed to attach to container: %w", err)
+		return 1, fmt.Errorf("failed to attach to container: %w", err)
 	}
-	defer attachResp.Close()
 
-	// Stream output in a goroutine
+	var closeAttachOnce sync.Once
+	closeAttach := func() {
+		closeAttachOnce.Do(func() {
+			attachResp.Close()
+		})
+	}
+
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	outputDone := make(chan struct{})
 	go func() {
-		// stdcopy.StdCopy demultiplexes stdout and stderr
-		stdcopy.StdCopy(os.Stdout, os.Stderr, attachResp.Reader)
+		_, _ = stdcopy.StdCopy(stdout, stderr, attachResp.Reader)
+		close(outputDone)
 	}()
 
-	// Wait for container to complete
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return containerID, fmt.Errorf("container wait error: %w", err)
-		}
-	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			return containerID, fmt.Errorf("container exited with code %d", status.StatusCode)
-		}
+	waitForDrainAfterClose := func() {
+		closeAttach()
+		<-outputDone
 	}
 
-	return containerID, nil
+	defer waitForDrainAfterClose()
+
+	statusCh, errCh := d.client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+
+	if err := d.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return 1, fmt.Errorf("failed to start container: %w", err)
+	}
+
+	if stdin != nil {
+		go func() {
+			_, _ = io.Copy(attachResp.Conn, stdin)
+			_ = attachResp.CloseWrite()
+		}()
+	}
+
+	// Invariants:
+	// (1) Attach happens before start so no early output is lost.
+	// (2) Wait registration happens before start so fast exits are observed.
+	// (3) Return happens only after stream EOF, or after explicit cancellation cleanup closes attach.
+	select {
+	case waitErr := <-errCh:
+		if waitErr != nil {
+			closeAttach()
+			<-outputDone
+			return 1, fmt.Errorf("container wait error: %w", waitErr)
+		}
+		<-outputDone
+		return 0, nil
+	case status := <-statusCh:
+		<-outputDone
+		return int(status.StatusCode), nil
+	}
 }
 
 // Commit saves the container state to a new image.
@@ -308,7 +350,10 @@ func (d *DockerRuntime) CreateContainer(baseImage string) (string, error) {
 // Run executes a binary inside a container with proper I/O handling (for shim use).
 // Returns the exit code of the command.
 func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
-	ctx := context.Background()
+	return d.runWithContext(context.Background(), opts)
+}
+
+func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (int, error) {
 	if err := d.initClient(); err != nil {
 		return 1, err
 	}
@@ -331,9 +376,11 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 		Image:        opts.Image,
 		Cmd:          cmd,
 		Tty:          false,
+		AttachStdin:  opts.Stdin != nil,
 		AttachStdout: true,
 		AttachStderr: true,
 		OpenStdin:    opts.Stdin != nil,
+		StdinOnce:    opts.Stdin != nil,
 		Env:          opts.Env,
 		WorkingDir:   opts.WorkDir,
 		User:         fmt.Sprintf("%s:%s", currentUser.Uid, currentUser.Gid),
@@ -341,7 +388,7 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 
 	// Prepare host config with volume mounts
 	hostConfig := &container.HostConfig{
-		AutoRemove: true,
+		AutoRemove: false,
 	}
 
 	if len(opts.Volumes) > 0 {
@@ -354,54 +401,15 @@ func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
 		return 1, fmt.Errorf("failed to create container: %w", err)
 	}
 
-	// Attach to container BEFORE starting to avoid race condition
-	attachOptions := container.AttachOptions{
-		Stream: true,
-		Stdout: true,
-		Stderr: true,
-		Stdin:  opts.Stdin != nil,
-	}
-
-	attachResp, err := d.client.ContainerAttach(ctx, resp.ID, attachOptions)
-	if err != nil {
-		return 1, fmt.Errorf("failed to attach to container: %w", err)
-	}
-	defer attachResp.Close()
-
-	// Start goroutine to stream stdout/stderr BEFORE container starts
-	outputDone := make(chan struct{})
-	go func() {
-		stdcopy.StdCopy(opts.Stdout, opts.Stderr, attachResp.Reader)
-		close(outputDone)
+	defer func() {
+		removeOptions := container.RemoveOptions{
+			Force:         true,
+			RemoveVolumes: true,
+		}
+		_ = d.client.ContainerRemove(context.Background(), resp.ID, removeOptions)
 	}()
 
-	// Stream stdin if provided
-	if opts.Stdin != nil {
-		go func() {
-			io.Copy(attachResp.Conn, opts.Stdin)
-			attachResp.CloseWrite()
-		}()
-	}
-
-	// NOW start the container (after attach is ready)
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return 1, fmt.Errorf("failed to start container: %w", err)
-	}
-
-	// Wait for container to finish
-	statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return 1, fmt.Errorf("container wait error: %w", err)
-		}
-	case status := <-statusCh:
-		// Removed outputDone lock to prevent terminal hangs
-		return int(status.StatusCode), nil
-	}
-
-	return 0, nil
+	return d.runAttachedAndDrain(ctx, resp.ID, opts.Stdin, opts.Stdout, opts.Stderr)
 }
 
 // ListExecutables returns all executable files in the container's PATH.

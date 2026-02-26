@@ -44,10 +44,6 @@ Example:
 	RunE: runShell,
 }
 
-func init() {
-	rootCmd.AddCommand(shellCmd)
-}
-
 func runShell(cmd *cobra.Command, args []string) error {
 	// Create a temporary directory for wrapper scripts
 	wrapperDir, err := os.MkdirTemp("", "tuprwre-shell-*")
