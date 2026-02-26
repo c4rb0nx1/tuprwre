@@ -6,200 +6,60 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > **Warning**
-> `tuprwre` is in it's early age. Expect breaking changes, missing features, and rough edges.
+> `tuprwre` is early-stage software. Expect breaking changes and rough edges.
 
-`tuprwre` is a high-performance sandbox designed specifically for AI agents (**Claude Code**, **OpenCode**, **Codex**, **SWE-agent**, **Cursor**, **Antigravity** and much more). It allows agents to install dependencies and run tools in isolated, persistent Docker environments while maintaining transparent access to your host's files.
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/bc8fd436-7576-46ee-a101-3fcd6bbd1cf7" width="100%" controls autoplay loop muted></video>
-</div>
-
+`tuprwre` is an action-level sandbox for AI agents and automation tools. It blocks risky install commands on the host, runs them inside Docker, discovers newly installed binaries, and generates host-side shims that transparently proxy execution back into the sandbox.
 
 ---
 
-## The Problem: The "Agentic" Security Gap
+## Current Setup (as of this branch)
 
-AI agents are powerful, but giving them shell access might give them ability to destroy your peace in many ways.
+`tuprwre` currently exposes three main commands:
 
-*   **Arbitrary Execution:** If an agent runs `npm install -g malicious-package`, it executes with *your* privileges.
-*   **System Pollution:** Agents clutter your host with global binaries, libraries, and config files you didn't ask for.
-*   **The VM Dilemma:** Full VMs are secure but heavy. They isolate the agent *too much*, breaking access to local project files.
+- `tuprwre shell` - interactive protected shell that intercepts dangerous commands (`apt`, `apt-get`, `npm`, `pip`, `pip3`, `curl`, `wget`) and blocks direct execution.
+- `tuprwre install -- <command>` - runs an install command in a container, commits the resulting image, discovers new binaries, and creates shims.
+- `tuprwre run -- <binary> [args...]` - internal execution path used by generated shims; also supports diagnostics flags.
 
-## The Solution: Action-Level Sandboxing
-
-`tuprwre` intercepts dangerous commands via `tuprwre shell` and traps them in Docker containers, generating transparent **shims** that proxy execution back to the container. 
-
-*   **Action-Level Interception:** Catch `npm`, `apt`, `pip`, and other installation vectors automatically via `tuprwre shell`.
-*   **Stateful Sessions:** Tools installed across multiple commands co-exist in the same persistent container environment using `--session`.
-*   **Host Context Mapping:** Sandboxed tools see your current directory (`$PWD`), and files created are owned by *you*, not root.
-*   **Smart Discovery:** Automatically detects new binaries installed by the agent and exposes *only* those to the host.
+There is **no session flag in the current CLI**.
 
 ---
 
-## System Prompt for Agents
+## Prerequisites
 
-To ensure your AI agent uses `tuprwre` correctly, add the following to your **`.cursorrules`**, **`AGENTS.md`**, or system prompt.
-
-> **Copy & Paste this block:**
-
-```markdown
-### Environment & Tool Installation (tuprwre)
-
-This environment is protected by `tuprwre`. You cannot install global packages directly to the host.
-
-**Rules:**
-1.  If you need to install system-level dependencies, CLI tools, or global packages (npm, pip, apt), you **MUST** use `tuprwre install`.
-2.  Do NOT run `npm install -g`, `pip install`, or `apt-get install` directly.
-3.  You should use the `--session` flag to group related tool installations into the same persistent container.
-
-**Command Format:**
-tuprwre install --session <session-id> --base-image <image> -- "<install_command>"
-
-**Examples:**
-# Install AWS CLI into a session named "aws-task"
-tuprwre install --session aws-task --base-image ubuntu:22.04 -- "apt-get update && apt-get install -y awscli"
-
-# Install a Node package into the same session
-tuprwre install --session aws-task -- "npm install -g @aws-amplify/cli"
-
-Once installed, the tool will be available in your PATH automatically, but it will execute safely inside the sandbox.
-```
-
----
-
-## Usage
-
-### 1. The Protected Shell (Recommended)
-
-The easiest way to protect yourself is to drop the agent into a `tuprwre shell`.
-
-```bash
-# Start a protected shell
-tuprwre shell
-```
-
-Inside this shell, dangerous commands are strictly blocked to enforce sandbox usage:
-
-```bash
-$ npm install -g rimraf
-[tuprwre] Command blocked: npm install -g rimraf
-[tuprwre] You are running inside a protected host environment.
-[tuprwre] To install tools or dependencies safely, you MUST use the sandbox:
-
-    tuprwre install --session "b4c8801c" -- "npm install -g rimraf"
-```
-
-### 2. Manual Installation
-
-You can manually sandbox tools. The discovery engine will diff the container, find what was installed, and generate the shims.
-
-```bash
-# One-time installation (safe!)
-tuprwre install --base-image ubuntu:22.04 -- "apt install -y jq"
-
-# Then use it like normal on your host!
-jq .status my_host_file.json 
-```
-
-### 3. I/O Diagnostics for Sandbox Runs
-
-When you need to debug stream behavior between the host and sandbox container, use `tuprwre run` diagnostics flags:
-
-* `--debug-io`: Prints human-readable lifecycle events for stdin/stdout/stderr forwarding.
-* `--capture-file <path>`: Writes the combined stdout/stderr stream to a local file for later inspection.
-* `--debug-io-json`: Optional JSON mode (NDJSON) for machine-readable diagnostics output.
-
-```bash
-# Human-readable diagnostics while running a shim target
-tuprwre run --image ubuntu:22.04 --debug-io -- bash -lc "echo ok && sleep 1 && echo done"
-
-# Capture command output to a file while still streaming to terminal
-tuprwre run --image ubuntu:22.04 --capture-file /tmp/tuprwre.out -- bash -lc "printf 'hello\n'"
-
-# JSON diagnostics for tooling/parsers
-tuprwre run --image ubuntu:22.04 --debug-io-json -- bash -lc "echo ping"
-```
-
-Sample `--debug-io` output:
-
-```text
-[tuprwre][io] start: binary=bash args=[-lc echo ok]
-[tuprwre][io] stream: stdout open
-ok
-[tuprwre][io] stream: stdout closed
-[tuprwre][io] done: exit_code=0
-```
-
-#### Troubleshooting Workflow
-
-1. **Empty output**
-   - Run again with `--debug-io` to confirm stdout/stderr streams opened and closed.
-   - Add `--capture-file /tmp/tuprwre.out` to verify whether output was produced but not displayed by your client.
-   - If diagnostics show stream activity but your tool still displays nothing, inspect client-side parsing/log handling.
-
-2. **Hang diagnosis**
-   - Re-run with `--debug-io` and check which stream never closes.
-   - Use `--debug-io-json` when integrating with automation so you can detect stalled phases programmatically.
-   - Confirm the command itself is not waiting on stdin or an interactive prompt.
-
-> **Caution**
-> Diagnostics can include command arguments and stream metadata. Avoid logging secrets, and do not capture or share sensitive environment values.
-
----
-
-## How It Works
-
-```text
-+----------------+      (1) Intercept       +---------------------+
-|  Agent / User  | -----------------------> |   tuprwre Shell     |
-+----------------+                          +---------------------+
-       |                                              |
-       | (4) Run Shim                                 | (2) Isolate & Install
-       v                                              v
-+----------------+      (3) Discover        +---------------------+
-|  Host System   | <----------------------- |  Docker Container   |
-| (~/.tuprwre)   |    (New Binaries)        |  (Session Image)    |
-+----------------+                          +---------------------+
-```
-
-1.  **Intercept**: `tuprwre shell` traps the installation command and blocks it.
-2.  **Isolate**: The agent uses `tuprwre install` to run the command inside a Docker container.
-3.  **Discover**: `tuprwre` diffs the container against its baseline to find new binaries.
-4.  **Shim**: Lightweight proxy scripts are created in `~/.tuprwre/bin` to transparently route host commands back into the sandbox.
+- Go 1.21+
+- Docker CLI + running Docker daemon
+- A shell environment where you can prepend `~/.tuprwre/bin` to `PATH`
 
 ---
 
 ## Installation
 
-### Using Makefile (Recommended)
+### Using Makefile (recommended)
 
 ```bash
 git clone https://github.com/c4rb0nx1/tuprwre
 cd tuprwre
 
-# Show available development targets
-make help
-
-# Build the CLI binary at ./build/tuprwre
+# Build ./build/tuprwre
 make build
 
-# Optional: run test suite
+# Optional verification
 make test
 
-# Install to GOPATH/bin (falls back to ~/go/bin)
+# Install to GOPATH/bin (fallback: ~/go/bin)
 make install
 ```
 
-Common development targets:
+Common targets:
 
-- `make deps` - download and tidy Go modules
-- `make build` - build production binary in `./build/`
-- `make dev` - build development binary (without stripped flags)
+- `make deps` - download and tidy modules
+- `make build` - production build in `./build/`
+- `make dev` - development build with debug info
 - `make test` - run tests
-- `make stress-output-race` - run headless output stress script
+- `make stress-output-race` - run stream stress check
 - `make clean` - remove build/test artifacts
 
-### From Source
+### From source
 
 ```bash
 git clone https://github.com/c4rb0nx1/tuprwre
@@ -208,17 +68,198 @@ go build -o tuprwre ./cmd/tuprwre
 sudo cp ./tuprwre /usr/local/bin/tuprwre
 ```
 
-### Setup
+---
 
-Add the shim directory to your `PATH` to ensure intercepted tools take precedence:
+## Host Setup
+
+`tuprwre` stores state under `~/.tuprwre` by default and writes generated shims to `~/.tuprwre/bin`.
+
+Add shim directory to `PATH`:
 
 ```bash
 echo 'export PATH="$HOME/.tuprwre/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
+If you use zsh:
+
+```bash
+echo 'export PATH="$HOME/.tuprwre/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+---
+
+## Usage
+
+### 1) Protected shell (interactive)
+
+```bash
+tuprwre shell
+```
+
+Inside the protected shell, risky commands are intercepted and blocked with guidance to use `tuprwre install`.
+
+Example:
+
+```bash
+$ npm install -g rimraf
+[tuprwre] Intercepted: npm install -g rimraf
+[tuprwre] For sandboxed execution, use: tuprwre install -- "npm install -g rimraf"
+
+[tuprwre] Command blocked. Use 'tuprwre install' for safe execution.
+```
+
+### 2) POSIX proxy shell mode (non-interactive `-c`)
+
+Use this mode for IDE/TUI automation that expects shell-compatible `-c` execution.
+
+```bash
+tuprwre shell -c "echo hello"
+tuprwre shell -c "npm run build"
+```
+
+Behavior contract:
+
+- no banner/session text on stdout or stderr in `-c` mode
+- only child command output should appear
+- if a command is explicitly blocked by wrappers, messaging is stderr-only
+
+IDE automation example (VS Code terminal automation profile):
+
+```json
+{
+  "terminal.integrated.automationProfile.osx": {
+    "path": "/usr/local/bin/tuprwre",
+    "args": ["shell"]
+  }
+}
+```
+
+`tuprwre shell -c "<cmd>"` must behave as a drop-in non-interactive shell entrypoint.
+
+### 3) Install tools safely in sandbox
+
+```bash
+# install jq using ubuntu base image
+tuprwre install --base-image ubuntu:22.04 -- "apt-get update && apt-get install -y jq"
+
+# installed binaries are shimmed on host
+jq --version
+```
+
+You can override output image name and shim overwrite behavior:
+
+```bash
+tuprwre install --base-image ubuntu:22.04 --image my-tools:latest --force -- "apt-get update && apt-get install -y yq"
+```
+
+### 4) Run command path used by shims
+
+`run` is mostly internal, but useful for diagnostics and debugging:
+
+```bash
+tuprwre run --image ubuntu:22.04 -- bash -lc "echo ok"
+```
+
+---
+
+## I/O Diagnostics (`tuprwre run`)
+
+Diagnostics flags:
+
+- `--debug-io` - human-readable lifecycle events.
+- `--debug-io-json` - NDJSON lifecycle events.
+- `--capture-file <path>` - captures combined stdout/stderr to a file.
+
+Examples:
+
+```bash
+# text diagnostics
+tuprwre run --image ubuntu:22.04 --debug-io -- bash -lc "echo ok"
+
+# json diagnostics
+tuprwre run --image ubuntu:22.04 --debug-io-json -- bash -lc "echo ok"
+
+# capture combined output
+tuprwre run --image ubuntu:22.04 --capture-file /tmp/tuprwre.out -- bash -lc "echo out; echo err >&2"
+```
+
+Sample `--debug-io` output:
+
+```text
+[tuprwre][debug-io] +0ms create
+[tuprwre][debug-io] +1ms attach
+[tuprwre][debug-io] +2ms wait-registered
+[tuprwre][debug-io] +4ms start
+[tuprwre][debug-io] +8ms wait-exit
+[tuprwre][debug-io] +8ms stream-eof
+[tuprwre][debug-io] +8ms cleanup
+```
+
+Troubleshooting workflow:
+
+1. **Empty output**
+   - Re-run with `--debug-io` and verify `start -> wait-exit -> stream-eof` is present.
+   - Add `--capture-file` to confirm data is emitted even if your client UI misses it.
+
+2. **Hang diagnosis**
+   - Re-run with `--debug-io-json` and inspect event progression.
+   - Check whether command is waiting for stdin/interactive input.
+
+> **Caution**
+> Diagnostics and capture files may contain command output and metadata. Avoid exposing secrets or sensitive environment values.
+
+---
+
+## How it works
+
+```text
+Agent/User
+   |
+   | 1) run in protected shell
+   v
+tuprwre shell (intercepts dangerous install commands)
+   |
+   | 2) run safe install command
+   v
+tuprwre install -- "<command>"
+   |
+   | 3) container run + commit + executable discovery
+   v
+~/.tuprwre/bin/<shim>
+   |
+   | 4) shim delegates execution
+   v
+tuprwre run --image <committed-image> -- <binary> [args...]
+```
+
+---
+
+## Environment variables
+
+- `TUPRWRE_DIR` - overrides base data directory (default `~/.tuprwre`)
+- `TUPRWRE_BASE_IMAGE` - default base image for config (default `ubuntu:22.04`)
+- `TUPRWRE_RUNTIME` - runtime selection (`docker` default; containerd path is scaffolded)
+
+---
+
+## System prompt snippet for agents
+
+```markdown
+### Environment & Tool Installation (tuprwre)
+
+This environment is protected by `tuprwre`.
+
+Rules:
+1. Use `tuprwre install` for global/system-level installs.
+2. Do not run host-level `apt-get install`, `npm install -g`, or `pip install` directly.
+3. If a command is blocked inside `tuprwre shell`, re-run it through:
+   tuprwre install -- "<install_command>"
+```
+
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE).

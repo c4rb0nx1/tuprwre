@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,30 +22,58 @@ var dangerousCommands = []string{
 	"wget",
 }
 
+var (
+	shellCommand    string
+	shellExec                 = exec.Command
+	shellExit                 = os.Exit
+	shellArgsReader           = func() []string { return os.Args }
+	shellStdin      io.Reader = os.Stdin
+	shellStdout     io.Writer = os.Stdout
+	shellStderr     io.Writer = os.Stderr
+)
+
 // shellCmd represents the shell command
 var shellCmd = &cobra.Command{
-	Use:   "shell",
+	Use:   "shell [-c <command>]",
 	Short: "Spawn an interactive shell with command interception enabled",
 	Long: `Starts a new subshell with a modified PATH that intercepts dangerous commands
 (apt, npm, pip, curl, etc.) and routes them through tuprwre for safe sandboxed execution.
+
+Modes:
+  - Interactive (no -c): starts a protected shell session.
+  - Non-interactive (-c "<cmd>"): runs one command as a POSIX proxy shell.
+
+In -c mode, tuprwre must remain silent (no banner/session text on stdout/stderr),
+except stderr output when a command is explicitly blocked by interception wrappers.
 
 This mode is designed for AI agents and users who want transparent sandboxing
 of installation commands without manually typing 'tuprwre install'.
 
 Example:
-  # Enter the protected shell
+  # Enter the protected shell (interactive)
   tuprwre shell
 
   # Now dangerous commands are intercepted
   $ npm install -g some-package
   [tuprwre] Intercepted: npm install -g some-package
-  [tuprwre] This would be routed through: tuprwre install -- "npm install -g some-package"
+  [tuprwre] For sandboxed execution, use: tuprwre install -- "npm install -g some-package"
   
-  # Type 'exit' to leave the shell and return to normal environment`,
+  # Type 'exit' to leave the shell and return to normal environment
+
+  # Non-interactive proxy mode
+  tuprwre shell -c "echo hello"
+
+  # IDE/TUI automation-friendly usage
+  tuprwre shell -c "npm run build"`,
 	RunE: runShell,
 }
 
 func runShell(cmd *cobra.Command, args []string) error {
+	commandString, hasCommand, err := resolveShellCommand(cmd)
+	if err != nil {
+		return err
+	}
+
 	// Create a temporary directory for wrapper scripts
 	wrapperDir, err := os.MkdirTemp("", "tuprwre-shell-*")
 	if err != nil {
@@ -68,29 +97,83 @@ func runShell(cmd *cobra.Command, args []string) error {
 	env = setEnvVar(env, "PATH", newPath)
 	env = setEnvVar(env, "TUPRWRE_SHELL", "1")
 	env = setEnvVar(env, "TUPRWRE_WRAPPER_DIR", wrapperDir)
+	env = setEnvVar(env, "TUPRWRE_SESSION_ID", os.Getenv("TUPRWRE_SESSION_ID"))
 
-	fmt.Fprintf(os.Stderr, "[tuprwre] Starting protected shell (%s)...\n", shell)
-	fmt.Fprintln(os.Stderr, "[tuprwre] Dangerous commands (apt, npm, pip, curl, etc.) are intercepted")
-	fmt.Fprintln(os.Stderr, "[tuprwre] Type 'exit' to return to normal shell")
+	if !hasCommand {
+		fmt.Fprintf(shellStderr, "[tuprwre] Starting protected shell (%s)...\n", shell)
+		fmt.Fprintln(shellStderr, "[tuprwre] Dangerous commands (apt, npm, pip, curl, etc.) are intercepted")
+		fmt.Fprintln(shellStderr, "[tuprwre] Type 'exit' to return to normal shell")
+	}
 
 	// Spawn the subshell
-	childCmd := exec.Command(shell)
+	childCmd := shellExec(shell)
+	if hasCommand {
+		childCmd = shellExec(shell, "-c", commandString)
+	}
 	childCmd.Env = env
-	childCmd.Stdin = os.Stdin
-	childCmd.Stdout = os.Stdout
-	childCmd.Stderr = os.Stderr
+	childCmd.Stdin = shellStdin
+	childCmd.Stdout = shellStdout
+	childCmd.Stderr = shellStderr
 
 	// Run the shell and wait for it to exit
 	if err := childCmd.Run(); err != nil {
 		// Exit code is expected when user types 'exit'
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			shellExit(exitErr.ExitCode())
+			return nil
 		}
 		return fmt.Errorf("shell execution failed: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "\n[tuprwre] Exited protected shell")
+	if !hasCommand {
+		fmt.Fprintln(shellStderr, "\n[tuprwre] Exited protected shell")
+	}
 	return nil
+}
+
+func resolveShellCommand(cmd *cobra.Command) (string, bool, error) {
+	hasCommand := cmd.Flags().Changed("command")
+	commandString := shellCommand
+
+	rawCommand, rawHasCommand, err := parseShellCommandFromArgv(shellArgsReader())
+	if err != nil {
+		return "", false, err
+	}
+	if rawHasCommand {
+		return rawCommand, true, nil
+	}
+
+	return commandString, hasCommand, nil
+}
+
+func parseShellCommandFromArgv(argv []string) (string, bool, error) {
+	shellIndex := -1
+	for i, arg := range argv {
+		if arg == "shell" {
+			shellIndex = i
+			break
+		}
+	}
+	if shellIndex == -1 {
+		return "", false, nil
+	}
+
+	for i := shellIndex + 1; i < len(argv); i++ {
+		arg := argv[i]
+		switch {
+		case arg == "-c" || arg == "--command":
+			if i+1 >= len(argv) {
+				return "", false, fmt.Errorf("missing command string for %s", arg)
+			}
+			return argv[i+1], true, nil
+		case strings.HasPrefix(arg, "-c="):
+			return strings.TrimPrefix(arg, "-c="), true, nil
+		case strings.HasPrefix(arg, "--command="):
+			return strings.TrimPrefix(arg, "--command="), true, nil
+		}
+	}
+
+	return "", false, nil
 }
 
 // generateWrappers creates wrapper scripts for dangerous commands
@@ -156,4 +239,8 @@ func setEnvVar(env []string, key, value string) []string {
 // cleanupWrapperDir removes the temporary wrapper directory
 func cleanupWrapperDir(dir string) {
 	os.RemoveAll(dir)
+}
+
+func init() {
+	shellCmd.Flags().StringVarP(&shellCommand, "command", "c", "", "Run command string in non-interactive mode")
 }
