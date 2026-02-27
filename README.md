@@ -11,6 +11,22 @@
 
 `tuprwre` is an action-level sandbox for AI and automation environments. It intercepts dangerous install commands on the host, runs those install scripts in disposable Docker containers, then publishes host-side shims for safe tool execution.
 
+## Why tuprwre?
+
+AI agents regularly run install commands (`apt install`, `npm install -g`, `pip install`) during task execution. Today, you either trust the agent blindly or micromanage every install. tuprwre fills this gap.
+
+| Approach | Scope | Agent-aware | Per-command | Setup cost |
+|----------|-------|-------------|-------------|------------|
+| **tuprwre** | Install isolation | Yes | Yes | Minimal |
+| Dev Containers | Full environment | No | No | High |
+| Nix | Reproducible builds | No | No | Steep |
+| Firejail / bubblewrap | System sandbox | No | No | Moderate |
+| "Just use Docker" | Full environment | No | No | Manual |
+
+**tuprwre's differentiator:** Per-command granularity with transparent shims. You don't containerize your whole workflow — you sandbox just the installs and get native-feeling tools back.
+
+---
+
 ## 30-second quickstart
 
 ```bash
@@ -288,6 +304,47 @@ tuprwre run --image <committed-image> -- <binary> [args...]
 
 ---
 
+## Security Model
+
+tuprwre provides **install isolation** — it ensures that agent-triggered package installations run inside disposable containers rather than on your host. It is not a full system sandbox.
+
+### What tuprwre protects against
+
+- **Host PATH pollution** — installed binaries live in container images, not on your host filesystem
+- **Persistent system changes** — install commands run in ephemeral containers that are discarded after image commit
+- **Unchecked agent installs** — dangerous `apt install`, `npm install -g`, `pip install` commands are intercepted and redirected
+
+### What tuprwre does NOT protect against (non-goals)
+
+- **Project file modification** — by default, your working directory is mounted read-write so tools can operate on project files. Use `--read-only-cwd` to restrict this
+- **Network exfiltration during execution** — by default, containers have network access. Use `--no-network` to disable network during tool execution
+- **Resource exhaustion** — by default, containers can consume host CPU and memory. Use `--memory` and `--cpus` to set limits
+- **Docker daemon access** — tuprwre requires Docker and trusts the Docker socket. A malicious image could interact with the Docker daemon
+- **Supply chain attacks** — tuprwre does not verify the integrity of packages installed inside containers
+
+### Hardening flags
+
+| Flag | Effect |
+|------|--------|
+| `--read-only-cwd` | Mount working directory as read-only inside the container |
+| `--no-network` | Disable all network access during tool execution |
+| `--memory 512m` | Limit container memory (e.g. `512m`, `1g`) |
+| `--cpus 1.0` | Limit container CPU usage (e.g. `0.5`, `2.0`) |
+
+Example hardened invocation:
+
+```bash
+tuprwre run --image toolset:latest --read-only-cwd --no-network --memory 512m --cpus 1.0 -- tool --version
+```
+
+### Threat model
+
+tuprwre assumes the host user trusts Docker and the Docker daemon. The primary threat is an AI agent running arbitrary install commands that pollute the host system. tuprwre isolates these installs to containers and exposes tools through controlled shim scripts.
+
+For full architectural details, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
 ## Environment variables
 
 - `TUPRWRE_DIR` - overrides base data directory (default `~/.tuprwre`)
@@ -312,6 +369,25 @@ Rules:
 
 ---
 
+## FAQ
+
+**Q: How much overhead does each tool invocation add?**
+Each shimmed tool call starts a Docker container, adding ~500ms-2s of latency. For tools called frequently, this can compound. A containerd runtime (lower overhead) is planned for a future release.
+
+**Q: Can I use tuprwre with Cursor / Claude Code / OpenCode?**
+Yes. Use `tuprwre shell -c "<command>"` as a POSIX-compatible proxy shell. See the [POSIX proxy shell mode](#2-posix-proxy-shell-mode-non-interactive--c) section.
+
+**Q: Does tuprwre work without Docker?**
+Not currently. Docker is a hard requirement. Containerd and Podman support are on the roadmap.
+
+**Q: Is my working directory safe from sandboxed tools?**
+By default, the working directory is mounted read-write so tools can operate on your files. Use `--read-only-cwd` to mount it read-only if the tool doesn't need to write files.
+
+**Q: Can sandboxed tools access the network?**
+By default, yes. Use `--no-network` to disable network access during tool execution.
+
+---
+
 ## License
 
-MIT License - see [LICENSE](LICENSE).
+Apache License 2.0 - see [LICENSE](LICENSE).
