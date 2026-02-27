@@ -6,6 +6,9 @@
 
 # Local planning/state artifacts
 /.beads/
+AGENTS.md
+launchpad_action_items.md
+starship_action_items.md
 
 # OS noise
 .DS_Store
