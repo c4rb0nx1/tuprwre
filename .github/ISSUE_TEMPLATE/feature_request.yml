@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a useful improvement
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. Share enough context to keep scope clear.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line summary of the feature.
+      placeholder: Add support for...
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why is this needed?
+      description: Use case and expected outcome.
+      placeholder: Helps me do ... faster with ... .
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed implementation
+      description: Optional, but helpful for maintainers.
+      placeholder: Steps, API changes, flags, docs updates, etc.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you tried or evaluated.
+      placeholder: Existing workaround ...
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - label: This change may affect existing CLI behavior
+        - label: This change may require docs updates
