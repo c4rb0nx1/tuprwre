@@ -165,6 +165,8 @@ IDE automation example (VS Code terminal automation profile):
 ```bash
 # install jq using ubuntu base image
 tuprwre install --base-image ubuntu:22.04 -- "apt-get update && apt-get install -y jq"
+# install from a local script file
+tuprwre install --script ./install.sh
 
 # installed binaries are shimmed on host
 jq --version
@@ -174,7 +176,11 @@ You can override output image name and shim overwrite behavior:
 
 ```bash
 tuprwre install --base-image ubuntu:22.04 --image my-tools:latest --force -- "apt-get update && apt-get install -y yq"
+# pass args to local script
+tuprwre install --script ./install.sh -- --verbose --dry-run
 ```
+
+If a shim was installed with `--script`, `tuprwre update <shim>` re-runs the same script path and arguments.
 
 ### 4) Run command path used by shims
 
