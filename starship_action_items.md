@@ -282,7 +282,7 @@ Then submit to relevant awesome lists:
 - [x] P0-3 CI workflow live + badge green
 - [x] P0-4 metadata/topics/homepage updated + social preview customized
 - [x] P0-5 community files/templates/discussions enabled
-- [ ] P1-6 root cleanup complete + `.gitignore` expanded
+- [x] P1-6 root cleanup complete + `.gitignore` expanded
 - [ ] P1-7 changelog + tag + GitHub release published
 - [ ] P1-8 onboarding issues created and pinned
 - [ ] P2-9 SEO sections/examples/awesome-list submissions complete

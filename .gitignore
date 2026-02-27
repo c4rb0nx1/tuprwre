@@ -6,3 +6,12 @@
 
 # Local planning/state artifacts
 /.beads/
+
+# OS noise
+.DS_Store
+
+# Debug/test artifacts
+output.json
+test.json
+*.out
+*.test
