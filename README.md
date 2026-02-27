@@ -1,34 +1,48 @@
 # tuprwre
 
-> **Stop AI agents from nuking your host machine.**
+> Keep host systems safe when automation installs software.
 
-[![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![CI](https://github.com/c4rb0nx1/tuprwre/actions/workflows/ci.yml/badge.svg)](https://github.com/c4rb0nx1/tuprwre/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/c4rb0nx1/tuprwre)](https://github.com/c4rb0nx1/tuprwre/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/c4rb0nx1/tuprwre)](https://golang.org)
+[![License](https://img.shields.io/github/license/c4rb0nx1/tuprwre)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/c4rb0nx1/tuprwre)](https://github.com/c4rb0nx1/tuprwre/stargazers)
+
+
+`tuprwre` is an action-level sandbox for AI and automation environments. It intercepts dangerous install commands on the host, runs those install scripts in disposable Docker containers, then publishes host-side shims for safe tool execution.
+
+## 30-second quickstart
+
+```bash
+git clone https://github.com/c4rb0nx1/tuprwre
+cd tuprwre
+go build -o tuprwre ./cmd/tuprwre
+sudo install -m 0755 tuprwre /usr/local/bin/tuprwre
+
+echo 'export PATH="$HOME/.tuprwre/bin:$PATH"' >> ~/.bashrc   # use ~/.zshrc for zsh
+source ~/.bashrc
+
+tuprwre --help
+tuprwre shell
+# try a dangerous command:
+npm install -g cowsay
+# [tuprwre] Intercepted... use "tuprwre install -- ..."
+exit
+
+tuprwre install -- "npm install -g cowsay"
+cowsay "tuprwre is active"
+```
+
+Compatibility: Cursor / Claude Code / OpenCode are supported through wrapper interception and non-interactive mode (`tuprwre shell -c "<command>"`).
+
+If this project helps your agent workflows, please **⭐ star** this repo and consider **sponsoring** the project: [Star](https://github.com/c4rb0nx1/tuprwre) · [Sponsor](https://github.com/sponsors/c4rb0nx1)
 
 > **Warning**
 > `tuprwre` is early-stage software. Expect breaking changes and rough edges.
 
-`tuprwre` is an action-level sandbox for AI agents and automation tools. It blocks risky install commands on the host, runs them inside Docker, discovers newly installed binaries, and generates host-side shims that transparently proxy execution back into the sandbox.
-
----
-
-## Current Setup (as of this branch)
-
-`tuprwre` currently exposes these primary commands:
-
-- `tuprwre shell` - interactive protected shell that intercepts dangerous commands (`apt`, `apt-get`, `npm`, `pip`, `pip3`, `curl`, `wget`) and blocks direct execution.
-- `tuprwre install -- <command>` - runs an install command in a container, commits the resulting image, discovers new binaries, and creates shims.
-- `tuprwre list` - enumerates installed shims.
-- `tuprwre run -- <binary> [args...]` - internal execution path used by generated shims; also supports diagnostics flags.
-- `tuprwre remove <shim>` - deletes a shim and its lifecycle metadata.
-- `tuprwre update <shim>` - re-runs install for an existing shim using stored metadata.
-- `tuprwre doctor` - performs preflight checks for CLI/runtime/path/docker readiness.
-
----
-
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.25+
 - Docker CLI + running Docker daemon
 - A shell environment where you can prepend `~/.tuprwre/bin` to `PATH`
 
