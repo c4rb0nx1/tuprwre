@@ -3,3 +3,6 @@
 
 # Local compiled binary
 /tuprwre
+
+# Local planning/state artifacts
+/.beads/
