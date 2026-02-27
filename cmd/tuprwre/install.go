@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/tuprwre/internal/config"
-	"github.com/yourusername/tuprwre/internal/discovery"
-	"github.com/yourusername/tuprwre/internal/sandbox"
-	"github.com/yourusername/tuprwre/internal/shim"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/discovery"
+	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
+	"github.com/c4rb0nx1/tuprwre/internal/shim"
 )
 
 var (
@@ -17,6 +19,7 @@ var (
 	installContainerID string
 	installImageName   string
 	installForce       bool
+	installArgsReader  = func() []string { return os.Args }
 )
 
 type installRequest struct {
@@ -59,8 +62,9 @@ func init() {
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("no installation command provided")
+	installCommand, err := resolveInstallCommand(args, installArgsReader())
+	if err != nil {
+		return err
 	}
 
 	// Load configuration
@@ -69,12 +73,50 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 	return installFlow(cmd, cfg, installRequest{
-		installCommand: args[0],
+		installCommand: installCommand,
 		baseImage:      installBaseImage,
 		containerID:    installContainerID,
 		imageName:      installImageName,
 		force:          installForce,
 	})
+}
+
+func resolveInstallCommand(argsFromCobra []string, argv []string) (string, error) {
+	if command, ok, err := parseInstallCommandFromArgv(argv); err != nil {
+		return "", err
+	} else if ok && command != "" {
+		return command, nil
+	}
+
+	if len(argsFromCobra) == 0 {
+		return "", fmt.Errorf("no installation command provided")
+	}
+	return strings.Join(argsFromCobra, " "), nil
+}
+
+func parseInstallCommandFromArgv(argv []string) (string, bool, error) {
+	installIndex := -1
+	for i, arg := range argv {
+		if arg == "install" {
+			installIndex = i
+			break
+		}
+	}
+
+	if installIndex == -1 {
+		return "", false, nil
+	}
+
+	for i := installIndex + 1; i < len(argv); i++ {
+		if argv[i] == "--" {
+			if i+1 >= len(argv) {
+				return "", false, fmt.Errorf("no installation command provided")
+			}
+			return strings.Join(argv[i+1:], " "), true, nil
+		}
+	}
+
+	return "", false, nil
 }
 
 func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) error {

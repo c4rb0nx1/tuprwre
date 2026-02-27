@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/yourusername/tuprwre/internal/config"
-	"github.com/yourusername/tuprwre/internal/sandbox"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
 )
 
 // Binary represents a discovered executable binary.

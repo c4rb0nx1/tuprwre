@@ -108,8 +108,8 @@ func TestDoctorCommandFailsOnInvalidRuntime(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected runDoctor to fail for invalid runtime")
 	}
-	if !strings.Contains(out.String(), "invalid TUPRWRE_RUNTIME") {
-		t.Fatalf("expected invalid runtime message, got %q", out.String())
+	if !strings.Contains(out.String(), "not supported") {
+		t.Fatalf("expected unsupported runtime message, got %q", out.String())
 	}
 }
 
@@ -132,5 +132,72 @@ func TestDoctorWritableStateDirCheck(t *testing.T) {
 	check := doctorCheckWritableDir(writable, "state dir")
 	if check.Status != doctorStatusPass {
 		t.Fatalf("expected writable dir check pass, got %q: %q", check.Status, check.Message)
+	}
+}
+
+func TestDoctorJSONModeReportsUnhealthyForUnsupportedRuntime(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+	t.Setenv("TUPRWRE_RUNTIME", "containerd")
+	shimDir := filepath.Join(tempHome, "bin")
+	originalPath := os.Getenv("PATH")
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+filepath.Clean("/usr/bin"))
+
+	prevLookPath := doctorLookPath
+	prevRunCommand := doctorRunCommand
+	prevJSON := doctorJSON
+	t.Cleanup(func() {
+		doctorLookPath = prevLookPath
+		doctorRunCommand = prevRunCommand
+		doctorJSON = prevJSON
+		t.Setenv("PATH", originalPath)
+	})
+
+	doctorLookPath = func(name string) (string, error) {
+		if name == "tuprwre" {
+			return "/usr/local/bin/tuprwre", nil
+		}
+		return "", fmt.Errorf("not found: %s", name)
+	}
+	doctorRunCommand = func(name string, args ...string) ([]byte, error) {
+		if name == "/usr/local/bin/tuprwre" && len(args) == 1 && args[0] == "--version" {
+			return []byte("tuprwre 0.0.5\n"), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s %v", name, args)
+	}
+
+	doctorJSON = true
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	err := runDoctor(cmd, nil)
+	if err == nil {
+		t.Fatal("expected runDoctor to fail for unsupported runtime")
+	}
+
+	var payload struct {
+		Healthy bool          `json:"healthy"`
+		Checks  []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json output: %v", err)
+	}
+	if payload.Healthy {
+		t.Fatalf("expected unhealthy report, got payload: %q", out.String())
+	}
+
+	found := false
+	for _, c := range payload.Checks {
+		if c.Name != "Runtime config" {
+			continue
+		}
+		found = true
+		if !strings.Contains(c.Message, "not implemented yet in run path") {
+			t.Fatalf("unexpected runtime message: %q", c.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("runtime config check missing from payload: %q", out.String())
 	}
 }

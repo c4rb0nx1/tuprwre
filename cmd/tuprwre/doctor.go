@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
 )
 
 const (
@@ -192,20 +192,28 @@ func doctorCheckVersion(binaryPath string) doctorCheck {
 
 func doctorCheckRuntime(cfg *config.Config) doctorCheck {
 	runtime := strings.ToLower(strings.TrimSpace(cfg.ContainerRuntime))
-	if runtime != "docker" && runtime != "containerd" {
+	switch runtime {
+	case "docker":
+		return doctorCheck{
+			Name:     "Runtime config",
+			Status:   doctorStatusPass,
+			Critical: true,
+			Message:  fmt.Sprintf("TUPRWRE_RUNTIME=%s", runtime),
+		}
+	case "containerd":
 		return doctorCheck{
 			Name:     "Runtime config",
 			Status:   doctorStatusFail,
 			Critical: true,
-			Message:  fmt.Sprintf("invalid TUPRWRE_RUNTIME=%q (must be docker or containerd)", cfg.ContainerRuntime),
+			Message:  "runtime containerd is not implemented yet in run path",
 		}
 	}
 
 	return doctorCheck{
 		Name:     "Runtime config",
-		Status:   doctorStatusPass,
+		Status:   doctorStatusFail,
 		Critical: true,
-		Message:  fmt.Sprintf("TUPRWRE_RUNTIME=%s", runtime),
+		Message:  fmt.Sprintf("runtime %q is not supported (supported: docker, containerd)", cfg.ContainerRuntime),
 	}
 }
 

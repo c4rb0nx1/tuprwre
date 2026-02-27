@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/client"
-	"github.com/yourusername/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
 )
 
 func requireDockerRuntime(t *testing.T) *DockerRuntime {

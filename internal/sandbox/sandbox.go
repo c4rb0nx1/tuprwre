@@ -18,7 +18,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/google/uuid"
-	"github.com/yourusername/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
 )
 
 // DockerRuntime provides container lifecycle management using Docker SDK.

@@ -5,8 +5,8 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/tuprwre/internal/config"
-	"github.com/yourusername/tuprwre/internal/shim"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/shim"
 )
 
 var listCmd = &cobra.Command{

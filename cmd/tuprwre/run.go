@@ -3,10 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/tuprwre/internal/config"
-	"github.com/yourusername/tuprwre/internal/sandbox"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
 )
 
 var (
@@ -59,6 +60,9 @@ func init() {
 func runSandboxed(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("no binary specified")
+	}
+	if err := validateRunRuntime(runRuntime); err != nil {
+		return err
 	}
 
 	binaryName := args[0]
@@ -115,4 +119,15 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 
 	os.Exit(exitCode)
 	return nil
+}
+
+func validateRunRuntime(runtime string) error {
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case "docker":
+		return nil
+	case "containerd":
+		return fmt.Errorf("runtime %q is not implemented yet in run path", runtime)
+	default:
+		return fmt.Errorf("runtime %q is not supported (supported: docker, containerd)", runtime)
+	}
 }

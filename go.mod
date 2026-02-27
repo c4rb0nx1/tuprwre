@@ -1,4 +1,4 @@
-module github.com/yourusername/tuprwre
+module github.com/c4rb0nx1/tuprwre
 
 go 1.25.4
 

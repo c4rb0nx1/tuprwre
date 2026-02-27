@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/yourusername/tuprwre/internal/config"
-	"github.com/yourusername/tuprwre/internal/discovery"
+	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/discovery"
 )
 
 // Generator creates shim scripts for sandboxed binaries.
