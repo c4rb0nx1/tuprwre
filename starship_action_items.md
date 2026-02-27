@@ -277,11 +277,11 @@ Then submit to relevant awesome lists:
 ---
 
 ## Completion Checklist (Definition of Done)
-- [ ] P0-1 module path/version alignment complete
-- [ ] P0-2 README conversion-focused top section complete
-- [ ] P0-3 CI workflow live + badge green
-- [ ] P0-4 metadata/topics/homepage updated + social preview customized
-- [ ] P0-5 community files/templates/discussions enabled
+- [x] P0-1 module path/version alignment complete
+- [x] P0-2 README conversion-focused top section complete
+- [x] P0-3 CI workflow live + badge green
+- [x] P0-4 metadata/topics/homepage updated + social preview customized
+- [x] P0-5 community files/templates/discussions enabled
 - [ ] P1-6 root cleanup complete + `.gitignore` expanded
 - [ ] P1-7 changelog + tag + GitHub release published
 - [ ] P1-8 onboarding issues created and pinned

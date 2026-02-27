@@ -9,28 +9,28 @@
 
 > Objective: remove the biggest launch risks in one workday.
 
-1. **Add a minimum CI gate** `[MISSING]`
+1. **Add a minimum CI gate** `[READY]`
    - Add `.github/workflows/ci.yml` with: `go test ./...`, `go vet ./...`, `go build ./cmd/tuprwre`
    - **Done when:** PRs fail on red checks and pass on green checks.
 
-2. **Enforce runtime flag validity in `run`** `[NEEDS-WORK]`
+2. **Enforce runtime flag validity in `run`** `[READY]`
    - Reject unknown runtime values at CLI boundary (`docker|containerd` only)
    - If `containerd` is selected, return explicit “not implemented yet” (until real support lands)
    - **Done when:** `tuprwre run --runtime totallyfake ...` fails fast with clear error.
 
-3. **Make `doctor` truthful about runtime support** `[NEEDS-WORK]`
+3. **Make `doctor` truthful about runtime support** `[READY]`
    - If runtime is `containerd`, mark health as failed (or degraded) until execution path exists
    - Keep Docker daemon check only for Docker mode
    - **Done when:** no healthy report is emitted for unsupported runtime paths.
 
-4. **Fix `install` command parsing** `[NEEDS-WORK]`
+4. **Fix `install` command parsing** `[READY]`
    - Support full command after `--` even if user forgets outer quotes
    - Stop using only `args[0]`; reconstruct command from all args
    - **Done when:** both forms work:
      - `tuprwre install -- "echo AAA BBB"`
      - `tuprwre install -- echo AAA BBB`
 
-5. **Resolve module/repo identity mismatch** `[NEEDS-WORK]`
+5. **Resolve module/repo identity mismatch** `[READY]`
    - Align `go.mod` module path and README repo path to the same canonical source
    - Update imports/tests accordingly
    - **Done when:** `go test ./...` passes and docs/install instructions point to one repo identity.
@@ -50,28 +50,28 @@
 ## P0 — Launch blockers (fix before public launch)
 
 1. **Infrastructure / CI-CD**
-   - `[MISSING]` Automated pipeline
+   - `[READY]` Automated pipeline
    - No GitHub Actions (or equivalent) release gate
 
 2. **Product runtime integrity (`docker` vs `containerd`)**
-   - `[NEEDS-WORK]`
+   - `[READY]`
    - `run --runtime totallyfake` still executes
    - Runtime flag is not enforced; behavior is misleading
 
 3. **Preflight reliability (`doctor`)**
-   - `[NEEDS-WORK]`
+   - `[READY]`
    - `doctor --json` can report healthy for `TUPRWRE_RUNTIME=containerd`
    - Current execution path still effectively depends on Docker
    - This creates false confidence
 
 4. **Install command parsing correctness**
-   - `[NEEDS-WORK]`
+   - `[READY]`
    - `install` uses only `args[0]`
    - Unquoted multi-word commands get truncated
    - High risk of user confusion/failure
 
 5. **Packaging / module identity correctness**
-   - `[NEEDS-WORK]`
+   - `[READY]`
    - `go.mod` uses `github.com/c4rb0nx1/tuprwre`
    - README points to `github.com/c4rb0nx1/tuprwre`
    - Public consumers may hit trust/install issues
@@ -100,44 +100,48 @@
    - `[NEEDS-WORK]`
    - Inconsistencies around `run --container` messaging vs `--image` requirement
 
-4. **Monitoring / alerting**
+4. **Clarify `install --container` semantics**
+   - `[DONE]`
+   - Clarified `install --container` help text to state that it resumes from an already-prepared container ID for advanced recovery/debugging.
+
+5. **Monitoring / alerting**
    - `[MISSING]`
    - No operational telemetry or alerting loop
 
-5. **Logging strategy**
+6. **Logging strategy**
    - `[NEEDS-WORK]`
    - Mostly ad hoc stdout/stderr prints
    - No structured logging/support-bundle path
 
-6. **Backup / recovery guidance**
+7. **Backup / recovery guidance**
    - `[MISSING]`
    - No documented recovery workflow for `~/.tuprwre` state/metadata
 
-7. **Environment separation / release channels**
+8. **Environment separation / release channels**
    - `[NEEDS-WORK]`
    - No explicit dev/beta/stable channel strategy
 
-8. **Troubleshooting depth**
+9. **Troubleshooting depth**
    - `[NEEDS-WORK]`
    - Some troubleshooting exists, not enough for first-wave support load
 
-9. **FAQ**
+10. **FAQ**
    - `[MISSING]`
    - No FAQ doc
 
-10. **Usage analytics**
+11. **Usage analytics**
     - `[MISSING]`
     - No usage/event instrumentation
 
-11. **Error tracking (Sentry/etc.)**
+12. **Error tracking (Sentry/etc.)**
     - `[MISSING]`
     - No crash/error collection pipeline
 
-12. **Feedback channel**
+13. **Feedback channel**
     - `[MISSING]`
     - No explicit issue/contact/community route in launch docs
 
-13. **NPS / survey mechanism**
+14. **NPS / survey mechanism**
     - `[MISSING]`
     - No post-launch sentiment loop
 

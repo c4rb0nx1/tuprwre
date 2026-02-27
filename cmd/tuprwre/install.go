@@ -46,11 +46,12 @@ var installCmd = &cobra.Command{
 commits the container state, discovers newly installed binaries, and
 generates shim scripts on the host for transparent execution.
 
-Phase 1: Ephemeral container spin-up with the provided base image
-Phase 2: Execute the installation command
-Phase 3: Commit the container state to a new image
-Phase 4: Discover new binaries by diffing PATH or filesystem
-Phase 5: Generate shim scripts in ~/.tuprwre/bin/`,
+Workflow:
+- Ephemeral container spin-up with the provided base image
+- Execute the installation command
+- Commit the container state to a new image
+- Discover new binaries by diffing PATH or filesystem
+- Generate shim scripts in ~/.tuprwre/bin/`,
 	Example: `  # Install from a curl script
 	  tuprwre install --base-image ubuntu:22.04 -- \
 	    "curl -fsSL https://example.com/install-tool.sh | bash"
@@ -63,7 +64,7 @@ Phase 5: Generate shim scripts in ~/.tuprwre/bin/`,
 
 func init() {
 	installCmd.Flags().StringVarP(&installBaseImage, "base-image", "i", "ubuntu:22.04", "Base Docker image to use for the sandbox")
-	installCmd.Flags().StringVarP(&installContainerID, "container", "c", "", "Existing container ID to use (skip Phase 1)")
+	installCmd.Flags().StringVarP(&installContainerID, "container", "c", "", "Resume from an already-prepared container ID (advanced recovery/debugging flow).")
 	installCmd.Flags().StringVarP(&installImageName, "image", "n", "", "Name for the committed image (auto-generated if not provided)")
 	installCmd.Flags().StringVarP(&installScriptPath, "script", "s", "", "Path to a local shell script")
 	installCmd.Flags().BoolVarP(&installForce, "force", "f", false, "Overwrite existing shims")
@@ -205,7 +206,7 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 		containerID = req.containerID
 		fmt.Printf("Using existing container: %s\n", containerID)
 	} else {
-		// Phase 1: Create and run container with installation command
+		// Create and run container with installation command
 		fmt.Printf("Creating sandbox container from image: %s\n", req.baseImage)
 		fmt.Printf("Running installation command...\n\n")
 
@@ -223,7 +224,7 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 		fmt.Printf("\nContainer finished successfully: %s\n", containerID)
 	}
 
-	// Phase 2: Commit container state
+	// Commit container state
 	imageName := req.imageName
 	if imageName == "" {
 		imageName = docker.GenerateImageName()
@@ -234,7 +235,7 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 		return fmt.Errorf("failed to commit container: %w", err)
 	}
 
-	// Phase 3: Discover binaries
+	// Discover binaries
 	fmt.Printf("Discovering installed binaries...\n")
 	disc := discovery.New(cfg, docker)
 	binaries, err := disc.DiscoverBinaries(req.baseImage, imageName)
@@ -244,7 +245,7 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 
 	cmd.Printf("Discovered %d new binaries\n", len(binaries))
 
-	// Phase 4: Generate shims
+	// Generate shims
 	if len(binaries) > 0 {
 		fmt.Printf("Generating shim scripts...\n")
 		shimGen := shim.NewGenerator(cfg)
