@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/user"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -112,8 +113,28 @@ func (d *DockerRuntime) initClient() error {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
 
+	pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if _, err := cli.Ping(pingCtx); err != nil {
+		_ = cli.Close()
+		if client.IsErrConnectionFailed(err) {
+			return fmt.Errorf("Docker daemon is not running or unreachable. %s", dockerStartHint(runtime.GOOS))
+		}
+		return fmt.Errorf("Docker daemon health check failed: %w", err)
+	}
+
 	d.client = cli
 	return nil
+}
+
+func dockerStartHint(goos string) string {
+	switch goos {
+	case "darwin", "windows":
+		return "Start Docker Desktop and retry."
+	default:
+		return "Start Docker and retry (for example: 'systemctl start docker')."
+	}
 }
 
 // PullImage ensures the base image exists locally, pulling if necessary.

@@ -1,4 +1,4 @@
-.PHONY: build test clean install fmt lint stress-output-race
+.PHONY: all build build-all test test-coverage stress-output-race clean install install-system uninstall fmt lint deps verify dev run help
 
 # Binary name
 BINARY_NAME=tuprwre
@@ -13,6 +13,11 @@ GOCLEAN=$(GOCMD) clean
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
+
+# Install directories
+# BIN_DIR can be overridden explicitly: make install BIN_DIR=/custom/bin
+BIN_DIR ?=
+SYSTEM_BIN_DIR ?= /usr/local/bin
 
 # Build flags
 LDFLAGS=-ldflags "-s -w"
@@ -65,13 +70,49 @@ clean:
 	@rm -f coverage.out coverage.html
 	@echo "Clean complete"
 
-# Install binary to GOPATH/bin
+# Install binary to Go bin dir (GOBIN or GOPATH/bin)
 install: build
-	@echo "Installing $(BINARY_NAME)..."
-	@cp $(BUILD_DIR)/$(BINARY_NAME) $(GOPATH)/bin/$(BINARY_NAME) 2>/dev/null || \
-		cp $(BUILD_DIR)/$(BINARY_NAME) ~/go/bin/$(BINARY_NAME) 2>/dev/null || \
-		echo "Please ensure ~/go/bin is in your PATH"
-	@echo "Install complete"
+	@bin_dir="$(BIN_DIR)"; \
+	if [ -z "$$bin_dir" ]; then \
+		bin_dir="$$($(GOCMD) env GOBIN 2>/dev/null)"; \
+	fi; \
+	if [ -z "$$bin_dir" ]; then \
+		gopath="$$($(GOCMD) env GOPATH 2>/dev/null)"; \
+		if [ -n "$$gopath" ]; then \
+			bin_dir="$$gopath/bin"; \
+		else \
+			bin_dir="$$HOME/go/bin"; \
+		fi; \
+	fi; \
+	echo "Installing $(BINARY_NAME) to $$bin_dir..."; \
+	mkdir -p "$$bin_dir"; \
+	install -m 0755 "$(BUILD_DIR)/$(BINARY_NAME)" "$$bin_dir/$(BINARY_NAME)"; \
+	echo "Install complete: $$bin_dir/$(BINARY_NAME)"
+
+# Install binary to system path (usually requires sudo)
+install-system: build
+	@echo "Installing $(BINARY_NAME) to $(SYSTEM_BIN_DIR)..."
+	@install -m 0755 "$(BUILD_DIR)/$(BINARY_NAME)" "$(SYSTEM_BIN_DIR)/$(BINARY_NAME)"
+	@echo "System install complete: $(SYSTEM_BIN_DIR)/$(BINARY_NAME)"
+
+# Remove installed binary from user/system locations if present
+uninstall:
+	@bin_dir="$(BIN_DIR)"; \
+	if [ -z "$$bin_dir" ]; then \
+		bin_dir="$$($(GOCMD) env GOBIN 2>/dev/null)"; \
+	fi; \
+	if [ -z "$$bin_dir" ]; then \
+		gopath="$$($(GOCMD) env GOPATH 2>/dev/null)"; \
+		if [ -n "$$gopath" ]; then \
+			bin_dir="$$gopath/bin"; \
+		else \
+			bin_dir="$$HOME/go/bin"; \
+		fi; \
+	fi; \
+	echo "Removing installed $(BINARY_NAME) binary..."; \
+	rm -f "$$bin_dir/$(BINARY_NAME)" 2>/dev/null || true; \
+	rm -f "$(SYSTEM_BIN_DIR)/$(BINARY_NAME)" 2>/dev/null || true; \
+	echo "Uninstall complete (checked: $$bin_dir, $(SYSTEM_BIN_DIR))"
 
 # Format code
 fmt:
@@ -114,7 +155,9 @@ help:
 	@echo "  test          - Run tests"
 	@echo "  test-coverage - Run tests with coverage report"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  install       - Install binary to GOPATH/bin"
+	@echo "  install       - Install binary to GOBIN or GOPATH/bin"
+	@echo "  install-system - Install binary to /usr/local/bin (sudo may be needed)"
+	@echo "  uninstall     - Remove installed binary from user/system bin dirs"
 	@echo "  fmt           - Format Go code"
 	@echo "  lint          - Run linter"
 	@echo "  deps          - Download and tidy dependencies"

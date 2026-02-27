@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/yourusername/tuprwre/internal/config"
@@ -17,6 +18,16 @@ var (
 	installImageName   string
 	installForce       bool
 )
+
+type installRequest struct {
+	installCommand string
+	baseImage      string
+	containerID    string
+	imageName      string
+	force          bool
+}
+
+var installFlow = runInstallFlow
 
 var installCmd = &cobra.Command{
 	Use:   "install [flags] -- <command>",
@@ -52,31 +63,39 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no installation command provided")
 	}
 
-	installCmdStr := args[0]
-
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	return installFlow(cmd, cfg, installRequest{
+		installCommand: args[0],
+		baseImage:      installBaseImage,
+		containerID:    installContainerID,
+		imageName:      installImageName,
+		force:          installForce,
+	})
+}
 
+func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) error {
 	// Create Docker runtime
 	docker := sandbox.New(cfg)
 	defer docker.Close()
 
 	ctx := context.Background()
 	var containerID string
+	var err error
 
-	if installContainerID != "" {
+	if req.containerID != "" {
 		// Use existing container
-		containerID = installContainerID
+		containerID = req.containerID
 		fmt.Printf("Using existing container: %s\n", containerID)
 	} else {
 		// Phase 1: Create and run container with installation command
-		fmt.Printf("Creating sandbox container from image: %s\n", installBaseImage)
+		fmt.Printf("Creating sandbox container from image: %s\n", req.baseImage)
 		fmt.Printf("Running installation command...\n\n")
 
-		containerID, err = docker.CreateAndRunContainer(ctx, installBaseImage, installCmdStr)
+		containerID, err = docker.CreateAndRunContainer(ctx, req.baseImage, req.installCommand)
 
 		// ALWAYS cleanup the container we just created, regardless of success/fail
 		defer func() {
@@ -91,7 +110,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Phase 2: Commit container state
-	imageName := installImageName
+	imageName := req.imageName
 	if imageName == "" {
 		imageName = docker.GenerateImageName()
 	}
@@ -104,7 +123,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Phase 3: Discover binaries
 	fmt.Printf("Discovering installed binaries...\n")
 	disc := discovery.New(cfg, docker)
-	binaries, err := disc.DiscoverBinaries(installBaseImage, imageName)
+	binaries, err := disc.DiscoverBinaries(req.baseImage, imageName)
 	if err != nil {
 		return fmt.Errorf("failed to discover binaries: %w", err)
 	}
@@ -116,8 +135,21 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Generating shim scripts...\n")
 		shimGen := shim.NewGenerator(cfg)
 		for _, binary := range binaries {
-			if err := shimGen.Create(binary, imageName, installForce); err != nil {
+			if err := shimGen.Create(binary, imageName, req.force); err != nil {
 				cmd.Printf("Warning: failed to create shim for %s: %v\n", binary.Name, err)
+				continue
+			}
+
+			metadata := shim.Metadata{
+				BinaryName:       binary.Name,
+				InstallCommand:   req.installCommand,
+				BaseImage:        req.baseImage,
+				OutputImage:      imageName,
+				InstalledAt:      time.Now().UTC().Format(time.RFC3339),
+				InstallForceUsed: req.force,
+			}
+			if err := shimGen.SaveMetadata(metadata); err != nil {
+				cmd.Printf("Warning: failed to persist metadata for %s: %v\n", binary.Name, err)
 			} else {
 				cmd.Printf("Created shim: %s\n", binary.Name)
 			}

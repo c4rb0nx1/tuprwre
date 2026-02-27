@@ -14,13 +14,15 @@
 
 ## Current Setup (as of this branch)
 
-`tuprwre` currently exposes three main commands:
+`tuprwre` currently exposes these primary commands:
 
 - `tuprwre shell` - interactive protected shell that intercepts dangerous commands (`apt`, `apt-get`, `npm`, `pip`, `pip3`, `curl`, `wget`) and blocks direct execution.
 - `tuprwre install -- <command>` - runs an install command in a container, commits the resulting image, discovers new binaries, and creates shims.
+- `tuprwre list` - enumerates installed shims.
 - `tuprwre run -- <binary> [args...]` - internal execution path used by generated shims; also supports diagnostics flags.
-
-There is **no session flag in the current CLI**.
+- `tuprwre remove <shim>` - deletes a shim and its lifecycle metadata.
+- `tuprwre update <shim>` - re-runs install for an existing shim using stored metadata.
+- `tuprwre doctor` - performs preflight checks for CLI/runtime/path/docker readiness.
 
 ---
 
@@ -46,8 +48,11 @@ make build
 # Optional verification
 make test
 
-# Install to GOPATH/bin (fallback: ~/go/bin)
+# Install to your Go bin directory (GOBIN or GOPATH/bin)
 make install
+
+# Optional: install system-wide (usually requires sudo)
+sudo make install-system
 ```
 
 Common targets:
@@ -56,6 +61,9 @@ Common targets:
 - `make build` - production build in `./build/`
 - `make dev` - development build with debug info
 - `make test` - run tests
+- `make install` - install to your Go bin directory
+- `make install-system` - install to `/usr/local/bin` (sudo may be required)
+- `make uninstall` - remove installed binary from common user/system locations
 - `make stress-output-race` - run stream stress check
 - `make clean` - remove build/test artifacts
 
@@ -160,6 +168,30 @@ tuprwre install --base-image ubuntu:22.04 --image my-tools:latest --force -- "ap
 
 ```bash
 tuprwre run --image ubuntu:22.04 -- bash -lc "echo ok"
+```
+
+### 5) Manage installed shims
+
+```bash
+# List all shims currently installed
+tuprwre list
+
+# Remove a specific shim and metadata
+tuprwre remove my-tool
+
+# Update a shim using metadata from its previous installation
+tuprwre update my-tool
+```
+
+### 6) Health diagnostics
+
+`tuprwre doctor` validates critical requirements before automation and troubleshooting.
+
+```bash
+tuprwre doctor
+
+# machine-readable mode for scripts/automation
+tuprwre doctor --json
 ```
 
 ---

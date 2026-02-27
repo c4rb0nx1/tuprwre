@@ -9,35 +9,37 @@ Welcome to the `tuprwre` codebase.
 2. **Sandbox (`cmd/tuprwre/install.go` & `internal/sandbox`)**: Runs the requested command inside a Docker container.
 3. **Discovery (`internal/discovery`)**: Diffs the Docker container against its baseline to see what tools were newly installed.
 4. **Shims (`internal/shim`)**: Creates host-side scripts (e.g., `~/.tuprwre/bin/jq`) that transparently route execution back into the sandbox.
-5. **Stateful Sessions**: Tools installed via `--session <id>` co-exist in the same persistent Docker container.
 
-## The Next Milestone: The "POSIX Proxy Shell"
+## POSIX Proxy Shell (Completed)
 
-**The Goal:** We need to upgrade `tuprwre shell` from an interactive-only sandbox into a fully POSIX-compliant proxy shell. This will allow `tuprwre shell` to act as a drop-in replacement for `/bin/bash` or `/bin/zsh` in IDEs (Cursor/VS Code) and TUIs (Claude Code).
+`tuprwre shell` now supports non-interactive POSIX proxy execution, including `-c` mode for IDE/TUI automation flows and strict non-interactive output behavior.
 
-### The Implementation Strategy
+### Completion Notes
+- `-c` command execution is supported via shell pass-through.
+- Non-interactive execution is silent on success (`stdout` is reserved for command output only).
+- Interception behavior still preserves sandbox context through environment exports (`TUPRWRE_SESSION_ID` and sandboxed `PATH`) so wrappers remain effective.
 
-If you are tasked with implementing the "POSIX Proxy Shell", follow these strict guidelines:
+### Session Support Status (Current)
+- Session management is not currently exposed as a top-level command surface.
 
-#### 1. Implement the `-c` Flag
-IDEs and Agents do not execute commands interactively. They use the `-c` flag (e.g., `/bin/bash -c "npm run build"`).
-* You must modify `cmd/tuprwre/shell.go` to accept `-c` and a command string.
-* *Note:* Cobra's standard flag parser (`cmd.Flags().StringVarP`) often strips quotes or mishandles complex bash strings. The safest approach is often to parse `os.Args` manually for the `-c` flag to preserve exact shell quoting, or carefully configure Cobra to accept arbitrary trailing args.
+## Post-POSIX Roadmap (Prioritized)
 
-#### 2. Pass-Through Execution
-If the `-c` flag is detected, do not spawn a hanging interactive shell.
-Instead, pass the exact command string down to the underlying OS shell:
-`exec.Command(shell, "-c", commandString)`
+### 1) Shim lifecycle commands (`list/remove/update`) [Completed]
+- `tuprwre list` - enumerate installed shims.
+- `tuprwre remove <shim>` - delete a shim and its associated metadata.
+- `tuprwre update <shim>` - rerun install logic for an existing shim using stored metadata.
 
-#### 3. Strict Silent Mode
-When running in `-c` mode (non-interactive), `tuprwre` **MUST BE 100% SILENT**.
-* Do not print `[tuprwre] Starting protected shell...`
-* Do not print session IDs.
-* Agents expect pristine `stdout` (often parsing it as JSON). If `tuprwre` prints banner text, it will fatally crash the agent's internal parser.
-* Only print to `stderr` if a command is explicitly blocked.
+### 2) `tuprwre doctor` preflight command [Completed]
+`tuprwre doctor` now provides actionable checks for:
+- `tuprwre` binary/runtime prerequisites
+- container availability and configuration
+- PATH/shim interception health
+- minimal diagnostics to guide setup and troubleshooting before first use
 
-#### 4. Environment Preservation
-Ensure the `TUPRWRE_SESSION_ID` and the hijacked `PATH` are still perfectly exported to the `childCmd.Env` even in `-c` mode. The interception wrappers must still work.
+Both commands are visible from top-level `tuprwre --help` and part of the release gate for roadmap items 1, 3, and 5.
 
-### Definition of Done
-If this is implemented correctly, a user can configure VS Code's `automationProfile` to use `/usr/local/bin/tuprwre shell`, and the VS Code AI Agent will seamlessly execute background tasks inside the sandbox without crashing or freezing.
+### 3) containerd runtime track [Priority: P3, future]
+Expand runtime support for `containerd` beyond `docker`, including:
+- runtime detection and selection ergonomics
+- container lifecycle parity
+- robust compatibility and migration notes for existing workflows

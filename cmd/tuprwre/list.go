@@ -1,0 +1,43 @@
+package main
+
+import (
+	"fmt"
+	"sort"
+
+	"github.com/spf13/cobra"
+	"github.com/yourusername/tuprwre/internal/config"
+	"github.com/yourusername/tuprwre/internal/shim"
+)
+
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List installed shims",
+	RunE:  runList,
+}
+
+func runList(cmd *cobra.Command, _ []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	shimGen := shim.NewGenerator(cfg)
+	shims, err := shimGen.List()
+	if err != nil {
+		return fmt.Errorf("failed to list shims: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	if len(shims) == 0 {
+		_, _ = fmt.Fprintln(out, "No shims installed.")
+		return nil
+	}
+
+	sort.Strings(shims)
+	for _, item := range shims {
+		_, _ = fmt.Fprintln(out, item)
+	}
+
+	return nil
+}
+

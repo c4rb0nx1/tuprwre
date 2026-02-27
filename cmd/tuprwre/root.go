@@ -37,7 +37,11 @@ func main() {
 
 func init() {
 	rootCmd.AddCommand(aboutCmd)
+	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(installCmd)
+	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(shellCmd)
 }
