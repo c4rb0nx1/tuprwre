@@ -43,6 +43,10 @@ type RunOptions struct {
 	DebugIO     bool
 	DebugIOJSON bool
 	CaptureFile string
+	ReadOnlyCwd bool
+	NoNetwork   bool
+	MemoryLimit int64   // bytes; 0 means no limit
+	CPULimit    float64 // number of CPUs; 0 means no limit
 }
 
 type runIODiagnostics struct {
@@ -490,7 +494,7 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 	// Prepare command
 	cmd := append([]string{opts.Binary}, opts.Args...)
 
-	config := &container.Config{
+	containerConfig := &container.Config{
 		Image:        opts.Image,
 		Cmd:          cmd,
 		Tty:          false,
@@ -502,11 +506,19 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 		Env:          opts.Env,
 		WorkingDir:   opts.WorkDir,
 		User:         fmt.Sprintf("%s:%s", currentUser.Uid, currentUser.Gid),
+		NetworkDisabled: opts.NoNetwork,
 	}
 
-	// Prepare host config with volume mounts
+	// Prepare host config with volume mounts and resource limits
 	hostConfig := &container.HostConfig{
 		AutoRemove: false,
+	}
+
+	if opts.MemoryLimit > 0 {
+		hostConfig.Resources.Memory = opts.MemoryLimit
+	}
+	if opts.CPULimit > 0 {
+		hostConfig.Resources.NanoCPUs = int64(opts.CPULimit * 1e9)
 	}
 
 	if len(opts.Volumes) > 0 {
@@ -514,7 +526,7 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 	}
 
 	// Create container (but don't start it yet)
-	resp, err := d.client.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
+	resp, err := d.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
 		return 1, fmt.Errorf("failed to create container: %w", err)
 	}

@@ -237,7 +237,9 @@ type Runtime interface {
 
 ### Execution Phase
 - Container is ephemeral (no state persistence)
-- Current directory mounted read-write (for file operations)
+- Current directory mounted read-write by default (for file operations); use `--read-only-cwd` to restrict
+- Network access enabled by default; use `--no-network` to isolate
+- No resource limits by default; use `--memory` and `--cpus` to constrain
 - Selective environment variable pass-through
 - No host binary access (isolated PATH)
 
@@ -245,6 +247,13 @@ type Runtime interface {
 - Generated with known-good templates
 - No user input in template execution
 - Set executable bit (0755)
+
+### Non-Goals
+tuprwre is designed for **install isolation**, not full system sandboxing:
+- Does not protect against Docker daemon compromise
+- Does not verify package integrity or supply chain
+- Does not provide network-level filtering (only on/off)
+- Does not sandbox the host process itself
 
 ## Performance Characteristics
 
@@ -274,11 +283,6 @@ type Runtime interface {
 ### Caching
 - Layer caching for repeated installs
 - Binary signature verification
-
-### Shim Management
-- `tuprwre list`: Show installed shims
-- `tuprwre remove <shim>`: Clean up
-- `tuprwre update <shim>`: Re-run install script
 
 ### Configuration
 - Per-shim environment variables
