@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/spf13/cobra"
 )
 
 func TestParseInstallCommandFromArgv(t *testing.T) {
@@ -90,10 +93,13 @@ func TestRunInstallUsesRawArgvCommand(t *testing.T) {
 
 	origFlow := installFlow
 	origReader := installArgsReader
+	origScript := installScriptPath
 	t.Cleanup(func() {
 		installFlow = origFlow
 		installArgsReader = origReader
+		installScriptPath = origScript
 	})
+	installScriptPath = ""
 
 	for _, tc := range cases {
 		tc := tc
@@ -117,5 +123,123 @@ func TestRunInstallUsesRawArgvCommand(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestRunInstallUsesScriptMode(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+
+	scriptPath := filepath.Join(tempHome, "install.sh")
+	if err := os.WriteFile(scriptPath, []byte("echo from script\n"), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	origFlow := installFlow
+	origReader := installArgsReader
+	origScript := installScriptPath
+	t.Cleanup(func() {
+		installFlow = origFlow
+		installArgsReader = origReader
+		installScriptPath = origScript
+	})
+
+	testCases := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "no script args",
+			args: nil,
+		},
+		{
+			name: "with script args",
+			args: []string{"--flag", "value"},
+		},
+	}
+
+	installScriptPath = scriptPath
+	installArgsReader = func() []string { return []string{"tuprwre", "install", "--script", scriptPath} }
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			captured := installRequest{}
+			installFlow = func(cmd *cobra.Command, _ *config.Config, req installRequest) error {
+				captured = req
+				return nil
+			}
+
+			if err := runInstall(&cobra.Command{}, tc.args); err != nil {
+				t.Fatalf("runInstall failed: %v", err)
+			}
+
+			if got, want := captured.installScriptPath, scriptPath; got != want {
+				t.Fatalf("script path mismatch: got=%q want=%q", got, want)
+			}
+			if got := len(captured.installScriptContent); got == 0 {
+				t.Fatal("expected script content to be captured")
+			}
+			if len(tc.args) != len(captured.installScriptArgs) {
+				t.Fatalf("script args length mismatch: got=%d want=%d", len(captured.installScriptArgs), len(tc.args))
+			}
+		})
+	}
+}
+
+func TestRunInstallScriptModeValidation(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+
+	origFlow := installFlow
+	origReader := installArgsReader
+	origScript := installScriptPath
+	t.Cleanup(func() {
+		installFlow = origFlow
+		installArgsReader = origReader
+		installScriptPath = origScript
+	})
+	installFlow = func(cmd *cobra.Command, c *config.Config, req installRequest) error { return nil }
+
+	missingScript := filepath.Join(tempHome, "missing.sh")
+	installScriptPath = missingScript
+	installArgsReader = func() []string { return []string{"tuprwre", "install", "--script", missingScript} }
+	if err := runInstall(&cobra.Command{}, nil); err == nil {
+		t.Fatal("expected missing script path error")
+	} else if !strings.Contains(err.Error(), "script file not found") {
+		t.Fatalf("expected script file not found error, got: %v", err)
+	}
+
+	unreadableDir := filepath.Join(tempHome, "dir")
+	if err := os.Mkdir(unreadableDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	installScriptPath = unreadableDir
+	installArgsReader = func() []string { return []string{"tuprwre", "install", "--script", unreadableDir} }
+	if err := runInstall(&cobra.Command{}, nil); err == nil {
+		t.Fatal("expected unreadable script error")
+	} else if !strings.Contains(err.Error(), "failed to read script") {
+		t.Fatalf("expected read error, got: %v", err)
+	}
+
+	installScriptPath = filepath.Join(tempHome, "install.sh")
+	if err := os.WriteFile(installScriptPath, []byte("echo ok\n"), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	captured := installRequest{}
+	installFlow = func(cmd *cobra.Command, _ *config.Config, req installRequest) error {
+		captured = req
+		return nil
+	}
+	installArgsReader = func() []string {
+		return []string{"tuprwre", "install", "--script", installScriptPath, "--", "--verbose", "--dry-run"}
+	}
+	if err := runInstall(&cobra.Command{}, []string{"--verbose", "--dry-run"}); err != nil {
+		t.Fatalf("expected script args after -- to work, got error: %v", err)
+	}
+	if got, want := len(captured.installScriptArgs), 2; got != want {
+		t.Fatalf("unexpected script arg count after --: got=%d want=%d", got, want)
+	}
+	if captured.installScriptArgs[0] != "--verbose" || captured.installScriptArgs[1] != "--dry-run" {
+		t.Fatalf("unexpected script args after --: %#v", captured.installScriptArgs)
+	}
 }

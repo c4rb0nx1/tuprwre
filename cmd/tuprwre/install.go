@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/c4rb0nx1/tuprwre/internal/discovery"
 	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
 	"github.com/c4rb0nx1/tuprwre/internal/shim"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -19,15 +22,19 @@ var (
 	installContainerID string
 	installImageName   string
 	installForce       bool
+	installScriptPath  string
 	installArgsReader  = func() []string { return os.Args }
 )
 
 type installRequest struct {
-	installCommand string
-	baseImage      string
-	containerID    string
-	imageName      string
-	force          bool
+	installCommand       string
+	baseImage            string
+	containerID          string
+	imageName            string
+	force                bool
+	installScriptPath    string
+	installScriptContent []byte
+	installScriptArgs    []string
 }
 
 var installFlow = runInstallFlow
@@ -58,11 +65,12 @@ func init() {
 	installCmd.Flags().StringVarP(&installBaseImage, "base-image", "i", "ubuntu:22.04", "Base Docker image to use for the sandbox")
 	installCmd.Flags().StringVarP(&installContainerID, "container", "c", "", "Existing container ID to use (skip Phase 1)")
 	installCmd.Flags().StringVarP(&installImageName, "image", "n", "", "Name for the committed image (auto-generated if not provided)")
+	installCmd.Flags().StringVarP(&installScriptPath, "script", "s", "", "Path to a local shell script")
 	installCmd.Flags().BoolVarP(&installForce, "force", "f", false, "Overwrite existing shims")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
-	installCommand, err := resolveInstallCommand(args, installArgsReader())
+	req, err := resolveInstallRequest(args, installArgsReader())
 	if err != nil {
 		return err
 	}
@@ -73,12 +81,60 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 	return installFlow(cmd, cfg, installRequest{
-		installCommand: installCommand,
-		baseImage:      installBaseImage,
-		containerID:    installContainerID,
-		imageName:      installImageName,
-		force:          installForce,
+		installCommand:       req.installCommand,
+		baseImage:            installBaseImage,
+		containerID:          installContainerID,
+		imageName:            installImageName,
+		force:                installForce,
+		installScriptPath:    req.installScriptPath,
+		installScriptContent: req.installScriptContent,
+		installScriptArgs:    req.installScriptArgs,
 	})
+}
+
+func resolveInstallRequest(argsFromCobra []string, argv []string) (*installRequest, error) {
+	if installScriptPath != "" {
+		absScriptPath, err := filepath.Abs(installScriptPath)
+		if err != nil {
+			return nil, fmt.Errorf("script file not found: %s", installScriptPath)
+		}
+
+		content, err := os.ReadFile(absScriptPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("script file not found: %s", absScriptPath)
+			}
+			return nil, fmt.Errorf("failed to read script %s: %w", absScriptPath, err)
+		}
+
+		return &installRequest{
+			installScriptPath:    absScriptPath,
+			installScriptContent: content,
+			installScriptArgs:    argsFromCobra,
+		}, nil
+	}
+
+	installCommand, err := resolveInstallCommand(argsFromCobra, argv)
+	if err != nil {
+		return nil, err
+	}
+
+	return &installRequest{
+		installCommand: installCommand,
+	}, nil
+}
+
+func buildScriptInstallCommand(scriptContent []byte, args []string) string {
+	encoded := base64.StdEncoding.EncodeToString(scriptContent)
+	if len(args) == 0 {
+		return fmt.Sprintf("printf '%s' | base64 -d | sh -s --", encoded)
+	}
+
+	quotedArgs := make([]string, 0, len(args))
+	for _, arg := range args {
+		quotedArgs = append(quotedArgs, strconv.Quote(arg))
+	}
+	return fmt.Sprintf("printf '%s' | base64 -d | sh -s -- %s", encoded, strings.Join(quotedArgs, " "))
 }
 
 func resolveInstallCommand(argsFromCobra []string, argv []string) (string, error) {
@@ -120,6 +176,22 @@ func parseInstallCommandFromArgv(argv []string) (string, bool, error) {
 }
 
 func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) error {
+	installCommand := req.installCommand
+	if req.installScriptPath != "" {
+		scriptContent := req.installScriptContent
+		if scriptContent == nil {
+			content, err := os.ReadFile(req.installScriptPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("script file not found: %s", req.installScriptPath)
+				}
+				return fmt.Errorf("failed to read script %s: %w", req.installScriptPath, err)
+			}
+			scriptContent = content
+		}
+		installCommand = buildScriptInstallCommand(scriptContent, req.installScriptArgs)
+	}
+
 	// Create Docker runtime
 	docker := sandbox.New(cfg)
 	defer docker.Close()
@@ -137,7 +209,7 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 		fmt.Printf("Creating sandbox container from image: %s\n", req.baseImage)
 		fmt.Printf("Running installation command...\n\n")
 
-		containerID, err = docker.CreateAndRunContainer(ctx, req.baseImage, req.installCommand)
+		containerID, err = docker.CreateAndRunContainer(ctx, req.baseImage, installCommand)
 
 		// ALWAYS cleanup the container we just created, regardless of success/fail
 		defer func() {
@@ -183,12 +255,15 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 			}
 
 			metadata := shim.Metadata{
-				BinaryName:       binary.Name,
-				InstallCommand:   req.installCommand,
-				BaseImage:        req.baseImage,
-				OutputImage:      imageName,
-				InstalledAt:      time.Now().UTC().Format(time.RFC3339),
-				InstallForceUsed: req.force,
+				BinaryName:        binary.Name,
+				InstallMode:       metadataInstallMode(&req),
+				InstallCommand:    req.installCommand,
+				InstallScriptPath: req.installScriptPath,
+				InstallScriptArgs: req.installScriptArgs,
+				BaseImage:         req.baseImage,
+				OutputImage:       imageName,
+				InstalledAt:       time.Now().UTC().Format(time.RFC3339),
+				InstallForceUsed:  req.force,
 			}
 			if err := shimGen.SaveMetadata(metadata); err != nil {
 				cmd.Printf("Warning: failed to persist metadata for %s: %v\n", binary.Name, err)
@@ -201,4 +276,11 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 	cmd.Printf("\nInstallation complete! Add %s to your PATH.\n", cfg.ShimDir)
 	cmd.Printf("Run: export PATH=\"%s:$PATH\"\n", cfg.ShimDir)
 	return nil
+}
+
+func metadataInstallMode(req *installRequest) string {
+	if req == nil || req.installScriptPath == "" {
+		return "command"
+	}
+	return "script"
 }

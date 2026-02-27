@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/c4rb0nx1/tuprwre/internal/shim"
+	"github.com/spf13/cobra"
 )
 
 var updateCmd = &cobra.Command{
@@ -38,19 +38,53 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load metadata for shim %q: %w", shimName, err)
 	}
 
-	if meta.InstallCommand == "" {
-		return fmt.Errorf("metadata for shim %q is missing install command", shimName)
-	}
+	var req installRequest
+	req.baseImage = meta.BaseImage
+	req.imageName = meta.OutputImage
+	req.force = true
 
-	req := installRequest{
-		installCommand: meta.InstallCommand,
-		baseImage:      meta.BaseImage,
-		imageName:      meta.OutputImage,
-		force:          true,
+	switch meta.InstallMode {
+	case "script":
+		if meta.InstallScriptPath == "" {
+			return fmt.Errorf("metadata for shim %q is missing script path", shimName)
+		}
+		content, err := os.ReadFile(meta.InstallScriptPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("stored script for shim %q is unavailable: script file not found: %s", shimName, meta.InstallScriptPath)
+			}
+			return fmt.Errorf("stored script for shim %q is unavailable: failed to read script %s: %w", shimName, meta.InstallScriptPath, err)
+		}
+		req.installScriptPath = meta.InstallScriptPath
+		req.installScriptContent = content
+		req.installScriptArgs = meta.InstallScriptArgs
+	case "", "command":
+		if meta.InstallCommand == "" {
+			return fmt.Errorf("metadata for shim %q is missing install command", shimName)
+		}
+		req.installCommand = meta.InstallCommand
+	default:
+		if meta.InstallCommand != "" {
+			req.installCommand = meta.InstallCommand
+			break
+		}
+		if meta.InstallScriptPath != "" {
+			content, err := os.ReadFile(meta.InstallScriptPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("stored script for shim %q is unavailable: script file not found: %s", shimName, meta.InstallScriptPath)
+				}
+				return fmt.Errorf("stored script for shim %q is unavailable: failed to read script %s: %w", shimName, meta.InstallScriptPath, err)
+			}
+			req.installScriptPath = meta.InstallScriptPath
+			req.installScriptContent = content
+			req.installScriptArgs = meta.InstallScriptArgs
+			break
+		}
+		return fmt.Errorf("metadata for shim %q is missing install source", shimName)
 	}
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Updating shim %q...\n", shimName)
 
 	return installFlow(cmd, cfg, req)
 }
-
