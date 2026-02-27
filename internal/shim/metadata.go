@@ -9,12 +9,15 @@ import (
 
 // Metadata describes how a shim was created.
 type Metadata struct {
-	BinaryName       string `json:"binary_name"`
-	InstallCommand   string `json:"source_install_command"`
-	BaseImage        string `json:"base_image"`
-	OutputImage      string `json:"output_image"`
-	InstalledAt      string `json:"installed_timestamp"`
-	InstallForceUsed bool   `json:"install_force"`
+	BinaryName        string   `json:"binary_name"`
+	InstallCommand    string   `json:"source_install_command"`
+	InstallMode       string   `json:"install_mode"`
+	InstallScriptPath string   `json:"install_script_path,omitempty"`
+	InstallScriptArgs []string `json:"install_script_args,omitempty"`
+	BaseImage         string   `json:"base_image"`
+	OutputImage       string   `json:"output_image"`
+	InstalledAt       string   `json:"installed_timestamp"`
+	InstallForceUsed  bool     `json:"install_force"`
 }
 
 func (g *Generator) metadataDir() string {
@@ -60,4 +63,3 @@ func (g *Generator) LoadMetadata(binaryName string) (Metadata, error) {
 func (g *Generator) RemoveMetadata(binaryName string) error {
 	return os.Remove(g.MetadataPath(binaryName))
 }
-
