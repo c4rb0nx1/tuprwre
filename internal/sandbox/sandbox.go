@@ -656,7 +656,11 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 
 	// Prepare host config with volume mounts and resource limits
 	hostConfig := &container.HostConfig{
-		AutoRemove: false,
+		AutoRemove:     false,
+		ReadonlyRootfs: true,
+		Tmpfs: map[string]string{
+			"/tmp": "size=64m,noexec",
+		},
 	}
 
 	if opts.MemoryLimit > 0 {
