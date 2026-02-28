@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.1.0-alpha.1"
+var version = "0.1.0-alpha.2"
 
 var rootCmd = &cobra.Command{
 	Use:     "tuprwre",
@@ -22,7 +22,7 @@ Example:
     "curl -L https://install.example.com/tool.sh | bash"
 
   # Run a sandboxed binary (used by shims internally)
-  tuprwre run --container tool:latest -- binary --help`,
+  tuprwre run --image tool:latest -- binary --help`,
 }
 
 func Execute() error {

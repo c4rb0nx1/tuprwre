@@ -392,6 +392,14 @@ By default, yes. Use `--no-network` to disable network access during tool execut
 
 ---
 
+## Support
+
+- **Bug reports**: [Open an issue](https://github.com/c4rb0nx1/tuprwre/issues/new?template=bug_report.yml)
+- **Feature requests**: [Open an issue](https://github.com/c4rb0nx1/tuprwre/issues/new?template=feature_request.yml)
+- **Questions & discussion**: [GitHub Discussions](https://github.com/c4rb0nx1/tuprwre/discussions)
+
+---
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE).
