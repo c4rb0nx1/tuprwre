@@ -219,8 +219,14 @@ tuprwre list
 # Remove a specific shim and metadata
 tuprwre remove my-tool
 
+# Remove all shims and metadata at once
+tuprwre remove --all
+
 # Update a shim using metadata from its previous installation
 tuprwre update my-tool
+
+# Remove orphaned Docker images created by tuprwre
+tuprwre clean
 ```
 
 ### 6) Health diagnostics
