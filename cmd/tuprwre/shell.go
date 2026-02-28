@@ -98,6 +98,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 	env = setEnvVar(env, "TUPRWRE_SHELL", "1")
 	env = setEnvVar(env, "TUPRWRE_WRAPPER_DIR", wrapperDir)
 	env = setEnvVar(env, "TUPRWRE_SESSION_ID", os.Getenv("TUPRWRE_SESSION_ID"))
+	env = setEnvVar(env, "BASH_SILENCE_DEPRECATION_WARNING", "1")
 
 	if !hasCommand {
 		fmt.Fprintf(shellStderr, "[tuprwre] Starting protected shell (%s)...\n", shell)

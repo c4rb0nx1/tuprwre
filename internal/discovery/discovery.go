@@ -96,15 +96,24 @@ func (d *Discoverer) FilterSystemBinaries(binaries []Binary) []Binary {
 		"ls": true, "cat": true, "grep": true,
 		"awk": true, "sed": true, "curl": true,
 		"wget": true, "tar": true, "gzip": true,
+		"[": true, "test": true, "[[": true,
 	}
 
 	var filtered []Binary
 	for _, b := range binaries {
-		if !systemBins[b.Name] {
+		if len(b.Name) == 0 {
+			continue
+		}
+		first := b.Name[0]
+		if !systemBins[b.Name] && isAlphanumeric(first) {
 			filtered = append(filtered, b)
 		}
 	}
 	return filtered
+}
+
+func isAlphanumeric(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 func extractNameFromPath(path string) string {

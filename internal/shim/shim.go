@@ -146,7 +146,9 @@ func (g *Generator) RemoveAll() ([]string, error) {
 	return removed, firstErr
 }
 
-// List returns all existing shim scripts.
+// List returns all existing shim scripts, filtering out names that
+// don't start with an alphanumeric character (e.g. "[", "test" shims
+// left over from earlier installs).
 func (g *Generator) List() ([]string, error) {
 	entries, err := os.ReadDir(g.config.ShimDir)
 	if err != nil {
@@ -155,11 +157,19 @@ func (g *Generator) List() ([]string, error) {
 
 	var shims []string
 	for _, entry := range entries {
-		if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-			shims = append(shims, entry.Name())
+		name := entry.Name()
+		if entry.IsDir() || strings.HasPrefix(name, ".") {
+			continue
+		}
+		if len(name) > 0 && isAlphanumeric(name[0]) {
+			shims = append(shims, name)
 		}
 	}
 	return shims, nil
+}
+
+func isAlphanumeric(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 // GetPath returns the full path to a shim.

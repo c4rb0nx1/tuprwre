@@ -11,6 +11,7 @@ func TestFilterSystemBinaries_RemovesKnownBins(t *testing.T) {
 		{Name: "bash", Path: "/bin/bash"},
 		{Name: "jq", Path: "/usr/local/bin/jq"},
 		{Name: "curl", Path: "/usr/bin/curl"},
+		{Name: "[", Path: "/usr/bin/["},
 		{Name: "ripgrep", Path: "/usr/local/bin/ripgrep"},
 	}
 
@@ -20,9 +21,43 @@ func TestFilterSystemBinaries_RemovesKnownBins(t *testing.T) {
 		t.Fatalf("expected 2 binaries, got %d: %+v", len(result), result)
 	}
 	for _, b := range result {
-		if b.Name == "sh" || b.Name == "bash" || b.Name == "curl" {
+		if b.Name == "sh" || b.Name == "bash" || b.Name == "curl" || b.Name == "[" {
 			t.Fatalf("system binary %q should have been filtered", b.Name)
 		}
+	}
+}
+
+func TestFilterSystemBinaries_RemovesBracketAndTest(t *testing.T) {
+	d := &Discoverer{}
+	input := []Binary{
+		{Name: "[", Path: "/usr/bin/["},
+		{Name: "test", Path: "/usr/bin/test"},
+		{Name: "jq", Path: "/usr/bin/jq"},
+	}
+
+	result := d.FilterSystemBinaries(input)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 binary, got %d: %+v", len(result), result)
+	}
+	if result[0].Name != "jq" {
+		t.Fatalf("expected jq to be retained, got %q", result[0].Name)
+	}
+}
+
+func TestFilterSystemBinaries_RemovesNonAlphanumericNames(t *testing.T) {
+	d := &Discoverer{}
+	input := []Binary{
+		{Name: ".hidden", Path: "/usr/bin/.hidden"},
+		{Name: "-flag", Path: "/usr/bin/-flag"},
+		{Name: "yq", Path: "/usr/bin/yq"},
+	}
+
+	result := d.FilterSystemBinaries(input)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 binary, got %d: %+v", len(result), result)
+	}
+	if result[0].Name != "yq" {
+		t.Fatalf("expected yq to be retained, got %q", result[0].Name)
 	}
 }
 

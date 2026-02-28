@@ -232,7 +232,7 @@ func doctorCheckShimDir(shimDir string) doctorCheck {
 			Name:     "Shim directory",
 			Status:   doctorStatusFail,
 			Critical: true,
-			Message:  fmt.Sprintf("shim directory %q is not on PATH", shimDir),
+			Message:  fmt.Sprintf("shim directory %q is not on PATH — fix: export PATH=%s:$PATH", shimDir, shimDir),
 		}
 	}
 

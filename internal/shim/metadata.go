@@ -37,7 +37,7 @@ func (g *Generator) SaveMetadata(metadata Metadata) error {
 	}
 
 	path := g.MetadataPath(metadata.BinaryName)
-	payload, err := json.Marshal(metadata)
+	payload, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
