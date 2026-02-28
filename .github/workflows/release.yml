@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/tuprwre-linux-amd64 ./cmd/tuprwre
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/tuprwre-linux-arm64 ./cmd/tuprwre
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/tuprwre-darwin-amd64 ./cmd/tuprwre
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/tuprwre-darwin-arm64 ./cmd/tuprwre
+
+      - name: Generate checksums
+        cd dist
+        run: sha256sum * > checksums.txt
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tuprwre-*
+            dist/checksums.txt
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
