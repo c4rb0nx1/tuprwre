@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.3] - 2026-03-01
+
+### Fixed
+- Removed deprecated `--container` flag from `run` command (was unused, conflicted with required `--image`)
+- Issue templates: added `assignees: []` for full GitHub community profile recognition
+
+### Added
+- README: documented `remove --all` and `clean` commands in usage section
+
+### Changed
+- Release badge switched from `github/v/release` to `github/v/tag` (prereleases now visible)
+- Version bumped to 0.1.0-alpha.3
+
 ## [0.1.0-alpha.2] - 2026-03-01
 
 ### Fixed
