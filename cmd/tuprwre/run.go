@@ -13,7 +13,6 @@ import (
 
 var (
 	runContainerImage string
-	runContainerID    string
 	runWorkDir        string
 	runEnv            []string
 	runVolumes        []string
@@ -50,7 +49,6 @@ The shim passes through:
 
 func init() {
 	runCmd.Flags().StringVarP(&runContainerImage, "image", "i", "", "Docker image to run (required)")
-	runCmd.Flags().StringVarP(&runContainerID, "container", "c", "", "Existing container to use instead of image")
 	runCmd.Flags().StringVarP(&runWorkDir, "workdir", "w", "", "Working directory inside container (default: current directory)")
 	runCmd.Flags().StringArrayVarP(&runEnv, "env", "e", []string{}, "Environment variables to pass (KEY=VALUE)")
 	runCmd.Flags().StringArrayVarP(&runVolumes, "volume", "v", []string{}, "Volume mounts (host:container)")
@@ -119,7 +117,6 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 	// Build run options
 	opts := sandbox.RunOptions{
 		Image:       runContainerImage,
-		ContainerID: runContainerID,
 		Binary:      binaryName,
 		Args:        binaryArgs,
 		WorkDir:     workDir,
