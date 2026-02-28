@@ -32,7 +32,7 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/tuprwre-darwin-arm64 ./cmd/tuprwre
 
       - name: Generate checksums
-        cd dist
+        working-directory: dist
         run: sha256sum * > checksums.txt
 
       - name: Release
