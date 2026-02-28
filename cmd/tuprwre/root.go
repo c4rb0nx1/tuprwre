@@ -37,6 +37,7 @@ func main() {
 
 func init() {
 	rootCmd.AddCommand(aboutCmd)
+	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(installCmd)

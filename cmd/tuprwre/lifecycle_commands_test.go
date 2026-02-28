@@ -13,6 +13,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func setRemoveMode(t *testing.T, all, images bool) {
+	t.Helper()
+	previousAll := removeAll
+	previousImages := removeImages
+	removeAll = all
+	removeImages = images
+	t.Cleanup(func() {
+		removeAll = previousAll
+		removeImages = previousImages
+	})
+}
+
+func seedLifecycleShimWithMetadata(t *testing.T, gen *shim.Generator, shimName string) {
+	t.Helper()
+	if err := os.WriteFile(gen.GetPath(shimName), []byte("#!bin\n"), 0o755); err != nil {
+		t.Fatalf("seed shim: %v", err)
+	}
+	if err := gen.SaveMetadata(shim.Metadata{
+		BinaryName:     shimName,
+		InstallCommand: "echo ok",
+		BaseImage:      "ubuntu:22.04",
+		OutputImage:    shimName + "-image:latest",
+		InstalledAt:    time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("seed metadata: %v", err)
+	}
+}
+
 func TestRunListCommandWithShims(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("TUPRWRE_DIR", tempHome)
@@ -66,6 +94,8 @@ func TestRunListCommandNoShims(t *testing.T) {
 }
 
 func TestRunRemoveCommandExistingAndMissingShim(t *testing.T) {
+	setRemoveMode(t, false, false)
+
 	tempHome := t.TempDir()
 	t.Setenv("TUPRWRE_DIR", tempHome)
 
@@ -106,6 +136,63 @@ func TestRunRemoveCommandExistingAndMissingShim(t *testing.T) {
 		t.Fatalf("expected missing shim removal to fail")
 	} else if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("unexpected missing-shim error: %v", err)
+	}
+}
+
+func TestRunRemoveAllCommand(t *testing.T) {
+	setRemoveMode(t, true, false)
+
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	gen := shim.NewGenerator(cfg)
+
+	seedLifecycleShimWithMetadata(t, gen, "tool-a")
+	seedLifecycleShimWithMetadata(t, gen, "tool-b")
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+
+	if err := runRemove(cmd, nil); err != nil {
+		t.Fatalf("runRemove --all failed: %v", err)
+	}
+
+	shims, err := gen.List()
+	if err != nil {
+		t.Fatalf("list shims after remove --all: %v", err)
+	}
+	if len(shims) != 0 {
+		t.Fatalf("expected no shims after remove --all, got %v", shims)
+	}
+
+	if _, err := os.Stat(gen.MetadataPath("tool-a")); !os.IsNotExist(err) {
+		t.Fatalf("expected tool-a metadata removed, got err=%v", err)
+	}
+	if _, err := os.Stat(gen.MetadataPath("tool-b")); !os.IsNotExist(err) {
+		t.Fatalf("expected tool-b metadata removed, got err=%v", err)
+	}
+}
+
+func TestRunRemoveAllNoShims(t *testing.T) {
+	setRemoveMode(t, true, false)
+
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+
+	if err := runRemove(cmd, nil); err != nil {
+		t.Fatalf("runRemove --all with no shims failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "No shims installed" {
+		t.Fatalf("unexpected output: %q", out.String())
 	}
 }
 

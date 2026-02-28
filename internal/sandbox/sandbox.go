@@ -9,22 +9,38 @@ import (
 	"os"
 	"os/user"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/google/uuid"
-	"github.com/c4rb0nx1/tuprwre/internal/config"
 )
 
 // DockerRuntime provides container lifecycle management using Docker SDK.
 type DockerRuntime struct {
 	config *config.Config
 	client *client.Client
+}
+
+type TuprwreImage struct {
+	ID         string
+	Repository string
+	Tag        string
+	Size       int64
+	Created    int64
+}
+
+type TuprwreContainer struct {
+	ID    string
+	Name  string
+	Image string
+	State string
 }
 
 // RunOptions contains parameters for running a sandboxed command.
@@ -168,6 +184,135 @@ func (d *DockerRuntime) PullImage(ctx context.Context, imageName string) error {
 	}
 
 	return nil
+}
+
+func (d *DockerRuntime) RemoveImage(ctx context.Context, imageName string) error {
+	if err := d.initClient(); err != nil {
+		return err
+	}
+
+	if _, err := d.client.ImageRemove(ctx, imageName, image.RemoveOptions{PruneChildren: true}); err != nil {
+		return fmt.Errorf("failed to remove image %s: %w", imageName, err)
+	}
+
+	return nil
+}
+
+func (d *DockerRuntime) ListStoppedTuprwreContainers(ctx context.Context) ([]TuprwreContainer, error) {
+	if err := d.initClient(); err != nil {
+		return nil, err
+	}
+
+	containerList, err := d.client.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	var containers []TuprwreContainer
+	for _, containerSummary := range containerList {
+		if containerSummary.State != "exited" && containerSummary.State != "dead" && containerSummary.State != "created" {
+			continue
+		}
+
+		name := ""
+		imageMatched := false
+		for _, containerName := range containerSummary.Names {
+			candidate := strings.TrimPrefix(containerName, "/")
+			if strings.HasPrefix(candidate, "tuprwre-") {
+				name = candidate
+				break
+			}
+		}
+		if name == "" && strings.HasPrefix(containerSummary.Image, "tuprwre-") {
+			imageMatched = true
+			if len(containerSummary.Names) > 0 {
+				name = strings.TrimPrefix(containerSummary.Names[0], "/")
+			}
+		}
+
+		if name == "" && imageMatched {
+			if len(containerSummary.ID) >= 12 {
+				name = containerSummary.ID[:12]
+			} else {
+				name = containerSummary.ID
+			}
+		}
+		if name == "" {
+			continue
+		}
+
+		containers = append(containers, TuprwreContainer{
+			ID:    containerSummary.ID,
+			Name:  name,
+			Image: containerSummary.Image,
+			State: containerSummary.State,
+		})
+	}
+
+	return containers, nil
+}
+
+func (d *DockerRuntime) RemoveContainer(ctx context.Context, containerID string) error {
+	if err := d.initClient(); err != nil {
+		return err
+	}
+
+	removeOptions := container.RemoveOptions{
+		Force:         true,
+		RemoveVolumes: true,
+	}
+
+	if err := d.client.ContainerRemove(ctx, containerID, removeOptions); err != nil {
+		return fmt.Errorf("failed to remove container: %w", err)
+	}
+
+	return nil
+}
+
+func (d *DockerRuntime) ListTuprwreImages(ctx context.Context) ([]TuprwreImage, error) {
+	if err := d.initClient(); err != nil {
+		return nil, err
+	}
+
+	imageSummaries, err := d.client.ImageList(ctx, image.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list images: %w", err)
+	}
+
+	images := make([]TuprwreImage, 0, len(imageSummaries))
+	for _, imageSummary := range imageSummaries {
+		repository := ""
+		tag := ""
+		for _, repoTag := range imageSummary.RepoTags {
+			repoPart, tagPart, ok := splitRepoTag(repoTag)
+			if !ok {
+				continue
+			}
+			if strings.HasPrefix(repoPart, "tuprwre-") {
+				repository = repoPart
+				tag = tagPart
+				break
+			}
+		}
+
+		if repository == "" {
+			continue
+		}
+
+		images = append(images, TuprwreImage{
+			ID:         imageSummary.ID,
+			Repository: repository,
+			Tag:        tag,
+			Size:       imageSummary.Size,
+			Created:    imageSummary.Created,
+		})
+	}
+
+	sort.Slice(images, func(i, j int) bool {
+		return images[i].Created > images[j].Created
+	})
+
+	return images, nil
 }
 
 // CreateAndRunContainer creates a container, runs the command, and returns the container ID.
@@ -495,17 +640,17 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 	cmd := append([]string{opts.Binary}, opts.Args...)
 
 	containerConfig := &container.Config{
-		Image:        opts.Image,
-		Cmd:          cmd,
-		Tty:          false,
-		AttachStdin:  opts.Stdin != nil,
-		AttachStdout: true,
-		AttachStderr: true,
-		OpenStdin:    opts.Stdin != nil,
-		StdinOnce:    opts.Stdin != nil,
-		Env:          opts.Env,
-		WorkingDir:   opts.WorkDir,
-		User:         fmt.Sprintf("%s:%s", currentUser.Uid, currentUser.Gid),
+		Image:           opts.Image,
+		Cmd:             cmd,
+		Tty:             false,
+		AttachStdin:     opts.Stdin != nil,
+		AttachStdout:    true,
+		AttachStderr:    true,
+		OpenStdin:       opts.Stdin != nil,
+		StdinOnce:       opts.Stdin != nil,
+		Env:             opts.Env,
+		WorkingDir:      opts.WorkDir,
+		User:            fmt.Sprintf("%s:%s", currentUser.Uid, currentUser.Gid),
 		NetworkDisabled: opts.NoNetwork,
 	}
 
@@ -526,7 +671,8 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 	}
 
 	// Create container (but don't start it yet)
-	resp, err := d.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	containerName := fmt.Sprintf("tuprwre-%s", uuid.NewString()[:8])
+	resp, err := d.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
 	if err != nil {
 		return 1, fmt.Errorf("failed to create container: %w", err)
 	}
@@ -745,6 +891,19 @@ func splitLines(s string) []string {
 		lines = append(lines, s[start:])
 	}
 	return lines
+}
+
+func splitRepoTag(repoTag string) (string, string, bool) {
+	if repoTag == "" || repoTag == "<none>:<none>" {
+		return "", "", false
+	}
+
+	idx := strings.LastIndex(repoTag, ":")
+	if idx <= 0 || idx >= len(repoTag)-1 {
+		return "", "", false
+	}
+
+	return repoTag[:idx], repoTag[idx+1:], true
 }
 
 // Close closes the Docker client connection.
