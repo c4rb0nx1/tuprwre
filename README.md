@@ -13,6 +13,8 @@
 
 [![Demo](https://asciinema.org/a/lGrhGS4fVlOgWuvO.svg)](https://asciinema.org/a/lGrhGS4fVlOgWuvO)
 
+[More demos →](docs/demos.md)
+
 ## Why tuprwre?
 
 AI agents regularly run install commands (`apt install`, `npm install -g`, `pip install`) during task execution. Today, you either trust the agent blindly or micromanage every install. tuprwre fills this gap.
