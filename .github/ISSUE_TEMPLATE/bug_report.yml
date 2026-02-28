@@ -3,6 +3,7 @@ description: Report a reproducible bug
 title: "[Bug]: "
 labels:
   - bug
+assignees: []
 body:
   - type: markdown
     attributes:
