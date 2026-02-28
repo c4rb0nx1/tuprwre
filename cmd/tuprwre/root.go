@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.0.5"
+var version = "0.1.0-alpha.1"
 
 var rootCmd = &cobra.Command{
 	Use:     "tuprwre",
