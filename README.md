@@ -3,7 +3,7 @@
 > Keep host systems safe when automation installs software.
 
 [![CI](https://github.com/c4rb0nx1/tuprwre/actions/workflows/ci.yml/badge.svg)](https://github.com/c4rb0nx1/tuprwre/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/c4rb0nx1/tuprwre)](https://github.com/c4rb0nx1/tuprwre/releases)
+[![Release](https://img.shields.io/github/v/tag/c4rb0nx1/tuprwre?label=release)](https://github.com/c4rb0nx1/tuprwre/releases)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/c4rb0nx1/tuprwre)](https://golang.org)
 [![License](https://img.shields.io/github/license/c4rb0nx1/tuprwre)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/c4rb0nx1/tuprwre)](https://github.com/c4rb0nx1/tuprwre/stargazers)

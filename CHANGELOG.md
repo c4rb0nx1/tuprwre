@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.2] - 2026-03-01
+
+### Fixed
+- CLI help text: `--container` corrected to `--image` in root command example
+- Release workflow YAML syntax error (`cd dist` → `working-directory: dist`)
+- Issue templates now recognized by GitHub (added `title:` fields and `config.yml`)
+- `tuprwre list` filters non-alphanumeric shim names (defense-in-depth for `[` bug)
+
+### Added
+- Read-only root filesystem enforced during `run` phase (`ReadonlyRootfs: true`, `/tmp` tmpfs)
+- Support section in README (bug reports, feature requests, discussions links)
+- Asciinema demo recordings in README and `docs/demos.md`
+- Issue template `config.yml` routing blank issues to Discussions
+
+### Changed
+- Version bumped to 0.1.0-alpha.2
+
 ## [0.1.0-alpha.1] - 2026-02-28
 
 ### Added
