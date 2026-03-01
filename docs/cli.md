@@ -282,7 +282,7 @@ Notes/gotchas:
 
 Examples:
 - `tuprwre shell`
-- `tuprwre shell -c "npm install -g example"`
+- `tuprwre shell -c "apt-get install -y jq"`
 - `tuprwre shell --intercept brew --allow curl`
 
 ### update

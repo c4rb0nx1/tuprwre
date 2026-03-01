@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/github/license/c4rb0nx1/tuprwre)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/c4rb0nx1/tuprwre)](https://github.com/c4rb0nx1/tuprwre/stargazers)
 
-`tuprwre` intercepts and blocks risky install commands (`apt`, `npm -g`, `pip`), guiding users to run them safely inside disposable Docker containers via `tuprwre install`.
+`tuprwre` intercepts and blocks risky install commands (`apt`, `pip`, `curl/wget`), guiding users to run them safely inside disposable Docker containers via `tuprwre install`.
 
 [![Demo](https://asciinema.org/a/lGrhGS4fVlOgWuvO.svg)](https://asciinema.org/a/lGrhGS4fVlOgWuvO)
 

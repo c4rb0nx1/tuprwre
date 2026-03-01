@@ -67,7 +67,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Write default config
 	defaultCfg := initConfig{
-		Intercept: []string{"apt", "apt-get", "npm", "pip", "pip3", "curl", "wget"},
+		Intercept: []string{"apt", "apt-get", "pip", "pip3", "curl", "wget"},
 		Allow:     []string{},
 		BaseImage: "ubuntu:22.04",
 		Runtime:   "docker",

@@ -29,7 +29,7 @@ var shellCmd = &cobra.Command{
 	Use:   "shell [-c <command>]",
 	Short: "Spawn an interactive shell with command interception enabled",
 	Long: `Starts a new subshell with a modified PATH that intercepts dangerous commands
-(apt, npm, pip, curl, etc.) and routes them through tuprwre for safe sandboxed execution.
+(apt, pip, curl, etc.), blocks them, and guides users to run them via tuprwre install.
 
 Modes:
   - Interactive (no -c): starts a protected shell session.
@@ -38,17 +38,17 @@ Modes:
 In -c mode, tuprwre must remain silent (no banner/session text on stdout/stderr),
 except stderr output when a command is explicitly blocked by interception wrappers.
 
-This mode is designed for AI agents and users who want transparent sandboxing
-of installation commands without manually typing 'tuprwre install'.
+This mode is designed for AI agents and users who want guardrails around
+installation commands while keeping non-intercepted commands unchanged.
 
 Example:
   # Enter the protected shell (interactive)
   tuprwre shell
 
   # Now dangerous commands are intercepted
-  $ npm install -g some-package
-  [tuprwre] Intercepted: npm install -g some-package
-  [tuprwre] For sandboxed execution, use: tuprwre install -- "npm install -g some-package"
+  $ apt-get install -y jq
+  [tuprwre] Intercepted: apt-get install -y jq
+  [tuprwre] For sandboxed execution, use: tuprwre install -- "apt-get install -y jq"
   
   # Type 'exit' to leave the shell and return to normal environment
 

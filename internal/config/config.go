@@ -57,7 +57,7 @@ type fileConfig struct {
 
 var defaultBaseImage = "ubuntu:22.04"
 var defaultRuntime = "docker"
-var defaultInterceptCommands = []string{"apt", "apt-get", "npm", "pip", "pip3", "curl", "wget"}
+var defaultInterceptCommands = []string{"apt", "apt-get", "pip", "pip3", "curl", "wget"}
 
 func copySlice(values []string) []string {
 	if len(values) == 0 {

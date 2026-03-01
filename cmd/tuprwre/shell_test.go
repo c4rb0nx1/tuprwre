@@ -330,7 +330,7 @@ func TestRunShellCommandModeExitCodePropagation(t *testing.T) {
 func TestRunShellCommandModeKeepsBlockedCommandBehavior(t *testing.T) {
 	exitCode, _, stderr, err := runShellWithTestHarness(
 		t,
-		[]string{"tuprwre", "shell", "-c", "npm install -g rimraf"},
+		[]string{"tuprwre", "shell", "-c", "apt-get install -y jq"},
 		"",
 		nil,
 	)
@@ -341,7 +341,7 @@ func TestRunShellCommandModeKeepsBlockedCommandBehavior(t *testing.T) {
 	if exitCode == -1 {
 		t.Fatal("expected non-zero exit code from blocked command")
 	}
-	if !strings.Contains(stderr, "[tuprwre] Intercepted: npm") {
+	if !strings.Contains(stderr, "[tuprwre] Intercepted: apt-get") {
 		t.Fatalf("expected interception message, got: %q", stderr)
 	}
 	if strings.Contains(stderr, "[tuprwre] Starting protected shell") || strings.Contains(stderr, "[tuprwre] Exited protected shell") {
@@ -352,7 +352,7 @@ func TestRunShellCommandModeKeepsBlockedCommandBehavior(t *testing.T) {
 func TestRunShellCommandModeBlockedCommandWritesOnlyBlockReasonToStderr(t *testing.T) {
 	exitCode, stdout, stderr, err := runShellWithTestHarness(
 		t,
-		[]string{"tuprwre", "shell", "-c", "npm install -g rimraf"},
+		[]string{"tuprwre", "shell", "-c", "apt-get install -y jq"},
 		"",
 		nil,
 	)
@@ -367,8 +367,8 @@ func TestRunShellCommandModeBlockedCommandWritesOnlyBlockReasonToStderr(t *testi
 		t.Fatalf("expected empty stdout, got: %q", stdout)
 	}
 
-	expected := "[tuprwre] Intercepted: npm install -g rimraf\n" +
-		"[tuprwre] For sandboxed execution, use: tuprwre install -- \"npm install -g rimraf\"\n" +
+	expected := "[tuprwre] Intercepted: apt-get install -y jq\n" +
+		"[tuprwre] For sandboxed execution, use: tuprwre install -- \"apt-get install -y jq\"\n" +
 		"\n" +
 		"[tuprwre] Command blocked. Use 'tuprwre install' for safe execution.\n"
 	if stderr != expected {

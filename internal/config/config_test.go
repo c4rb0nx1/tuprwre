@@ -39,7 +39,7 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Fatalf("ContainerRuntime = %q, want %q", cfg.ContainerRuntime, "docker")
 	}
 
-	expectedIntercept := []string{"apt", "apt-get", "npm", "pip", "pip3", "curl", "wget"}
+	expectedIntercept := []string{"apt", "apt-get", "pip", "pip3", "curl", "wget"}
 	if !reflect.DeepEqual(cfg.InterceptCommands, expectedIntercept) {
 		t.Fatalf("InterceptCommands = %v, want %v", cfg.InterceptCommands, expectedIntercept)
 	}
@@ -333,7 +333,7 @@ func TestLoadMerge_DefaultInterceptList(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	expected := []string{"apt", "apt-get", "npm", "pip", "pip3", "curl", "wget"}
+	expected := []string{"apt", "apt-get", "pip", "pip3", "curl", "wget"}
 	if !reflect.DeepEqual(cfg.InterceptCommands, expected) {
 		t.Fatalf("InterceptCommands = %v, want %v", cfg.InterceptCommands, expected)
 	}
