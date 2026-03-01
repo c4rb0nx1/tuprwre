@@ -23,6 +23,8 @@ var (
 	installImageName   string
 	installForce       bool
 	installScriptPath  string
+	installMemoryLimit string
+	installCPULimit    float64
 	installArgsReader  = func() []string { return os.Args }
 )
 
@@ -35,6 +37,8 @@ type installRequest struct {
 	installScriptPath    string
 	installScriptContent []byte
 	installScriptArgs    []string
+	memoryLimit          string
+	cpuLimit             float64
 }
 
 var installFlow = runInstallFlow
@@ -68,6 +72,8 @@ func init() {
 	installCmd.Flags().StringVarP(&installImageName, "image", "n", "", "Name for the committed image (auto-generated if not provided)")
 	installCmd.Flags().StringVarP(&installScriptPath, "script", "s", "", "Path to a local shell script")
 	installCmd.Flags().BoolVarP(&installForce, "force", "f", false, "Overwrite existing shims")
+	installCmd.Flags().StringVar(&installMemoryLimit, "memory", "", "Memory limit for the install container (e.g. 512m, 1g)")
+	installCmd.Flags().Float64Var(&installCPULimit, "cpus", 0, "CPU limit for the install container (e.g. 0.5, 1.0, 2.0)")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -90,6 +96,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		installScriptPath:    req.installScriptPath,
 		installScriptContent: req.installScriptContent,
 		installScriptArgs:    req.installScriptArgs,
+		memoryLimit:          installMemoryLimit,
+		cpuLimit:             installCPULimit,
 	})
 }
 
@@ -199,18 +207,34 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 
 	ctx := context.Background()
 	var containerID string
-	var err error
+	var resources sandbox.ResourcePolicy
 
 	if req.containerID != "" {
 		// Use existing container
 		containerID = req.containerID
 		fmt.Printf("Using existing container: %s\n", containerID)
 	} else {
+		// Resolve resource limits: CLI flags override config defaults
+		spec := sandbox.MergeResourceSpec(req.memoryLimit, req.cpuLimit, cfg.DefaultMemory, cfg.DefaultCPUs)
+		var err error
+		resources, err = docker.ResolveResourceSpec(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("failed to resolve resource limits: %w", err)
+		}
+
 		// Create and run container with installation command
 		fmt.Printf("Creating sandbox container from image: %s\n", req.baseImage)
+		if !resources.IsZero() {
+			if resources.Memory > 0 {
+				fmt.Printf("Memory limit: %d bytes\n", resources.Memory)
+			}
+			if resources.CPUs > 0 {
+				fmt.Printf("CPU limit: %.2f\n", resources.CPUs)
+			}
+		}
 		fmt.Printf("Running installation command...\n\n")
 
-		containerID, err = docker.CreateAndRunContainer(ctx, req.baseImage, installCommand)
+		containerID, err = docker.CreateAndRunContainer(ctx, req.baseImage, installCommand, resources)
 
 		// ALWAYS cleanup the container we just created, regardless of success/fail
 		defer func() {

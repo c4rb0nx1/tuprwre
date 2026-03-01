@@ -21,6 +21,27 @@
 - Shims are generated under `~/.tuprwre/bin`.
 - After PATH setup, agents/users call tools directly (`jq`, `cowsay`, etc.); shims invoke `tuprwre run` internally.
 
+## Security model
+
+tuprwre provides **install isolation plus execution-path isolation for shimmed tools**.
+
+What it does:
+
+- Routes risky install commands into disposable containers.
+- Avoids host-level global package installation side effects.
+- Routes direct tool invocations through shim scripts (not host global binaries).
+- Supports additional hardening during execution:
+  - `--read-only-cwd`
+  - `--no-network`
+  - `--memory`
+  - `--cpus`
+
+What it does not do by default:
+
+- Full system sandboxing for every command.
+- Eliminate Docker daemon trust risks.
+- Verify package supply chain integrity inside install scripts.
+
 ## Install
 
 Prerequisites:
@@ -68,27 +89,6 @@ If this project helps your agent workflows, please **⭐ star** this repo and co
 > **Warning**
 > `tuprwre` is early-stage software. Expect breaking changes and rough edges.
 
-## Security model
-
-tuprwre provides **install isolation plus execution-path isolation for shimmed tools**.
-
-What it does:
-
-- Routes risky install commands into disposable containers.
-- Avoids host-level global package installation side effects.
-- Routes direct tool invocations through shim scripts (not host global binaries).
-- Supports additional hardening during execution:
-  - `--read-only-cwd`
-  - `--no-network`
-  - `--memory`
-  - `--cpus`
-
-What it does not do by default:
-
-- Full system sandboxing for every command.
-- Eliminate Docker daemon trust risks.
-- Verify package supply chain integrity inside install scripts.
-
 ## Core commands
 
 ```bash
@@ -100,6 +100,7 @@ tuprwre shell -c "echo hello"
 
 # sandboxed install
 tuprwre install -- "apt-get update && apt-get install -y jq"
+tuprwre install --memory 512m --cpus 1.0 -- "apt-get update && apt-get install -y jq"
 tuprwre install --script ./install.sh
 
 # direct tool execution through shim
@@ -145,6 +146,19 @@ tuprwre shell --intercept brew --allow curl
 TUPRWRE_INTERCEPT="apt,npm,brew" tuprwre shell
 ```
 
+### Resource defaults
+
+Config files support default resource limits with absolute or host-relative values:
+
+```json
+{
+  "default_memory": "25%",
+  "default_cpus": "50%"
+}
+```
+
+Percentage values resolve at runtime against the Docker host. On macOS Docker Desktop, percentages reflect VM limits, not full host hardware. CLI flags (`--memory`, `--cpus`) override config defaults.
+
 Environment variables:
 
 | Variable | Effect |
@@ -153,6 +167,8 @@ Environment variables:
 | `TUPRWRE_BASE_IMAGE` | Default base image (default `ubuntu:22.04`) |
 | `TUPRWRE_RUNTIME` | Runtime selection (`docker` default) |
 | `TUPRWRE_INTERCEPT` | Comma-separated intercept list override |
+| `TUPRWRE_DEFAULT_MEMORY` | Default memory limit for containers (e.g. `512m`, `1g`, `25%`) |
+| `TUPRWRE_DEFAULT_CPUS` | Default CPU limit for containers (e.g. `2.0`, `50%`) |
 
 ## How it works
 
@@ -173,7 +189,7 @@ No. After install + PATH setup, call tools directly by binary name. Shims invoke
 Not currently. Docker is required. Containerd/Podman support is roadmap work.
 
 **Can I harden runtime execution further?**
-Yes. Use `--read-only-cwd`, `--no-network`, `--memory`, and `--cpus` when invoking `tuprwre run`.
+Yes. Use `--read-only-cwd`, `--no-network`, `--memory`, and `--cpus` with `tuprwre run` or `tuprwre install`. You can also set persistent defaults via `default_memory` and `default_cpus` in config.
 
 ## Support
 

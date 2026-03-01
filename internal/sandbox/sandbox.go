@@ -317,7 +317,8 @@ func (d *DockerRuntime) ListTuprwreImages(ctx context.Context) ([]TuprwreImage, 
 
 // CreateAndRunContainer creates a container, runs the command, and returns the container ID.
 // It streams stdout/stderr to the terminal in real-time.
-func (d *DockerRuntime) CreateAndRunContainer(ctx context.Context, baseImage, command string) (string, error) {
+// Resource limits from the policy are applied to the container's HostConfig.
+func (d *DockerRuntime) CreateAndRunContainer(ctx context.Context, baseImage, command string, resources ResourcePolicy) (string, error) {
 	if err := d.initClient(); err != nil {
 		return "", err
 	}
@@ -340,11 +341,14 @@ func (d *DockerRuntime) CreateAndRunContainer(ctx context.Context, baseImage, co
 		OpenStdin:    false,
 	}
 
+	hostConfig := &container.HostConfig{}
+	applyResourceLimits(hostConfig, resources)
+
 	// Create the container
 	resp, err := d.client.ContainerCreate(
 		ctx,
 		config,
-		&container.HostConfig{},
+		hostConfig,
 		nil,
 		nil,
 		containerName,
@@ -663,12 +667,10 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 		},
 	}
 
-	if opts.MemoryLimit > 0 {
-		hostConfig.Resources.Memory = opts.MemoryLimit
-	}
-	if opts.CPULimit > 0 {
-		hostConfig.Resources.NanoCPUs = int64(opts.CPULimit * 1e9)
-	}
+	applyResourceLimits(hostConfig, ResourcePolicy{
+		Memory: opts.MemoryLimit,
+		CPUs:   opts.CPULimit,
+	})
 
 	if len(opts.Volumes) > 0 {
 		hostConfig.Binds = opts.Volumes

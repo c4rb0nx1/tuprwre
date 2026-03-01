@@ -24,10 +24,12 @@ the default base image, and other settings.`,
 }
 
 type initConfig struct {
-	Intercept []string `json:"intercept"`
-	Allow     []string `json:"allow"`
-	BaseImage string   `json:"base_image"`
-	Runtime   string   `json:"runtime"`
+	Intercept     []string `json:"intercept"`
+	Allow         []string `json:"allow"`
+	BaseImage     string   `json:"base_image"`
+	Runtime       string   `json:"runtime"`
+	DefaultMemory string   `json:"default_memory"`
+	DefaultCPUs   string   `json:"default_cpus"`
 }
 
 func init() {

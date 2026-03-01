@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -199,5 +200,96 @@ func TestDoctorJSONModeReportsUnhealthyForUnsupportedRuntime(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("runtime config check missing from payload: %q", out.String())
+	}
+}
+
+func TestDoctorResourceDefaultsNoConfig(t *testing.T) {
+	cfg := &config.Config{}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusPass {
+		t.Fatalf("expected PASS, got %q: %q", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "no default limits configured") {
+		t.Fatalf("expected no default limits message, got %q", check.Message)
+	}
+}
+
+func TestDoctorResourceDefaultsValidAbsolute(t *testing.T) {
+	cfg := &config.Config{
+		DefaultMemory: "512m",
+		DefaultCPUs:   "2.0",
+	}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusPass {
+		t.Fatalf("expected PASS, got %q: %q", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "memory=512m") {
+		t.Fatalf("expected memory value in message, got %q", check.Message)
+	}
+	if !strings.Contains(check.Message, "cpus=2.0") {
+		t.Fatalf("expected cpus value in message, got %q", check.Message)
+	}
+}
+
+func TestDoctorResourceDefaultsValidPercentage(t *testing.T) {
+	cfg := &config.Config{
+		DefaultMemory: "25%",
+		DefaultCPUs:   "50%",
+	}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusPass {
+		t.Fatalf("expected PASS, got %q: %q", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "memory=25%") {
+		t.Fatalf("expected memory percentage in message, got %q", check.Message)
+	}
+	if !strings.Contains(check.Message, "cpus=50%") {
+		t.Fatalf("expected cpus percentage in message, got %q", check.Message)
+	}
+}
+
+func TestDoctorResourceDefaultsInvalidMemory(t *testing.T) {
+	cfg := &config.Config{
+		DefaultMemory: "not-a-size",
+	}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusFail {
+		t.Fatalf("expected FAIL, got %q: %q", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "not-a-size") {
+		t.Fatalf("expected parse error to include invalid value, got %q", check.Message)
+	}
+}
+
+func TestDoctorResourceDefaultsInvalidCPUs(t *testing.T) {
+	cfg := &config.Config{
+		DefaultCPUs: "abc",
+	}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusFail {
+		t.Fatalf("expected FAIL, got %q: %q", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "abc") {
+		t.Fatalf("expected parse error to include invalid value, got %q", check.Message)
+	}
+}
+
+func TestDoctorResourceDefaultsInvalidPercentageOver100(t *testing.T) {
+	cfg := &config.Config{
+		DefaultMemory: "200%",
+	}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusFail {
+		t.Fatalf("expected FAIL, got %q: %q", check.Status, check.Message)
+	}
+}
+
+func TestDoctorResourceDefaultsInvalidPercentageZero(t *testing.T) {
+	cfg := &config.Config{
+		DefaultMemory: "0%",
+	}
+	check := doctorCheckResourceDefaults(cfg)
+	if check.Status != doctorStatusFail {
+		t.Fatalf("expected FAIL, got %q: %q", check.Status, check.Message)
 	}
 }

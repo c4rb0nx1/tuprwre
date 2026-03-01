@@ -6,9 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/docker/go-units"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
 )
 
@@ -83,6 +86,8 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		if runtimeCheck.Status == doctorStatusPass && cfg.ContainerRuntime == "docker" {
 			addDoctorCheck(doctorCheckDockerReachable())
 		}
+
+		addDoctorCheck(doctorCheckResourceDefaults(cfg))
 	}
 
 	criticalFailures := 0
@@ -299,6 +304,110 @@ func doctorCheckWritableDir(path string, label string) doctorCheck {
 		Status:   doctorStatusPass,
 		Critical: true,
 		Message:  fmt.Sprintf("writable directory: %s", path),
+	}
+}
+
+func doctorCheckResourceDefaults(cfg *config.Config) doctorCheck {
+	if cfg.DefaultMemory == "" && cfg.DefaultCPUs == "" {
+		return doctorCheck{
+			Name:     "Resource limits",
+			Status:   doctorStatusPass,
+			Critical: false,
+			Message:  "no default limits configured (containers unbounded unless --memory/--cpus flags used)",
+		}
+	}
+
+	parts := make([]string, 0, 2)
+	hadPercentage := false
+	if cfg.DefaultMemory != "" {
+		memoryRaw := strings.TrimSpace(cfg.DefaultMemory)
+		if strings.HasSuffix(memoryRaw, "%") {
+			memoryPercent, err := strconv.ParseFloat(strings.TrimSuffix(memoryRaw, "%"), 64)
+			if err != nil || memoryPercent <= 0 || memoryPercent > 100 {
+				if err != nil {
+					return doctorCheck{
+						Name:     "Resource limits",
+						Status:   doctorStatusFail,
+						Critical: false,
+						Message:  fmt.Sprintf("invalid default_memory %q: %v", cfg.DefaultMemory, err),
+					}
+				}
+				return doctorCheck{
+					Name:     "Resource limits",
+					Status:   doctorStatusFail,
+					Critical: false,
+					Message:  fmt.Sprintf("invalid default_memory %q: percentage must be in (0,100], got %q", cfg.DefaultMemory, cfg.DefaultMemory),
+				}
+			}
+			parts = append(parts, fmt.Sprintf("memory=%s (resolved=%.2f%%)", memoryRaw, memoryPercent))
+			hadPercentage = true
+		} else {
+			memoryBytes, err := units.RAMInBytes(memoryRaw)
+			if err != nil {
+				return doctorCheck{
+					Name:     "Resource limits",
+					Status:   doctorStatusFail,
+					Critical: false,
+					Message:  fmt.Sprintf("invalid default_memory %q: %v", cfg.DefaultMemory, err),
+				}
+			}
+			parts = append(parts, fmt.Sprintf("memory=%s (resolved=%d bytes)", memoryRaw, memoryBytes))
+		}
+	}
+	if cfg.DefaultCPUs != "" {
+		cpusRaw := strings.TrimSpace(cfg.DefaultCPUs)
+		if strings.HasSuffix(cpusRaw, "%") {
+			cpusPercent, err := strconv.ParseFloat(strings.TrimSuffix(cpusRaw, "%"), 64)
+			if err != nil || cpusPercent <= 0 || cpusPercent > 100 {
+				if err != nil {
+					return doctorCheck{
+						Name:     "Resource limits",
+						Status:   doctorStatusFail,
+						Critical: false,
+						Message:  fmt.Sprintf("invalid default_cpus %q: %v", cfg.DefaultCPUs, err),
+					}
+				}
+				return doctorCheck{
+					Name:     "Resource limits",
+					Status:   doctorStatusFail,
+					Critical: false,
+					Message:  fmt.Sprintf("invalid default_cpus %q: percentage must be in (0,100], got %q", cfg.DefaultCPUs, cfg.DefaultCPUs),
+				}
+			}
+			parts = append(parts, fmt.Sprintf("cpus=%s (resolved=%.2f%%)", cpusRaw, cpusPercent))
+			hadPercentage = true
+		} else {
+			cpusValue, err := strconv.ParseFloat(cpusRaw, 64)
+			if err != nil || cpusValue < 0 {
+				if err != nil {
+					return doctorCheck{
+						Name:     "Resource limits",
+						Status:   doctorStatusFail,
+						Critical: false,
+						Message:  fmt.Sprintf("invalid default_cpus %q: %v", cfg.DefaultCPUs, err),
+					}
+				}
+				return doctorCheck{
+					Name:     "Resource limits",
+					Status:   doctorStatusFail,
+					Critical: false,
+					Message:  fmt.Sprintf("invalid default_cpus %q: value must be non-negative, got %q", cfg.DefaultCPUs, cfg.DefaultCPUs),
+				}
+			}
+			parts = append(parts, fmt.Sprintf("cpus=%s (resolved=%g)", cpusRaw, cpusValue))
+		}
+	}
+
+	message := fmt.Sprintf("default limits configured: %s", strings.Join(parts, ", "))
+	if hadPercentage && runtime.GOOS == "darwin" {
+		message += " (note: on macOS, percentages resolve against Docker Desktop VM limits, not host hardware)"
+	}
+
+	return doctorCheck{
+		Name:     "Resource limits",
+		Status:   doctorStatusPass,
+		Critical: false,
+		Message:  message,
 	}
 }
 

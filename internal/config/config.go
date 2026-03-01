@@ -34,13 +34,25 @@ type Config struct {
 
 	// WorkspaceRoot is the discovered workspace root path
 	WorkspaceRoot string
+
+	// DefaultMemory is the default memory limit for containers.
+	// Supports absolute values ("512m", "1g") or host-relative percentages ("25%").
+	// Empty string means no limit.
+	DefaultMemory string
+
+	// DefaultCPUs is the default CPU limit for containers.
+	// Supports absolute values ("2.0") or host-relative percentages ("50%").
+	// Empty string means no limit.
+	DefaultCPUs string
 }
 
 type fileConfig struct {
-	Intercept []string `json:"intercept,omitempty"`
-	Allow     []string `json:"allow,omitempty"`
-	BaseImage string   `json:"base_image,omitempty"`
-	Runtime   string   `json:"runtime,omitempty"`
+	Intercept     []string `json:"intercept,omitempty"`
+	Allow         []string `json:"allow,omitempty"`
+	BaseImage     string   `json:"base_image,omitempty"`
+	Runtime       string   `json:"runtime,omitempty"`
+	DefaultMemory string   `json:"default_memory,omitempty"`
+	DefaultCPUs   string   `json:"default_cpus,omitempty"`
 }
 
 var defaultBaseImage = "ubuntu:22.04"
@@ -204,6 +216,12 @@ func Load() (*Config, error) {
 		if len(globalConfig.Allow) > 0 {
 			cfg.AllowCommands = copySlice(globalConfig.Allow)
 		}
+		if globalConfig.DefaultMemory != "" {
+			cfg.DefaultMemory = globalConfig.DefaultMemory
+		}
+		if globalConfig.DefaultCPUs != "" {
+			cfg.DefaultCPUs = globalConfig.DefaultCPUs
+		}
 	}
 
 	if workspaceConfig != nil {
@@ -219,10 +237,18 @@ func Load() (*Config, error) {
 		if len(workspaceConfig.Allow) > 0 {
 			cfg.AllowCommands = copySlice(workspaceConfig.Allow)
 		}
+		if workspaceConfig.DefaultMemory != "" {
+			cfg.DefaultMemory = workspaceConfig.DefaultMemory
+		}
+		if workspaceConfig.DefaultCPUs != "" {
+			cfg.DefaultCPUs = workspaceConfig.DefaultCPUs
+		}
 	}
 
 	cfg.DefaultBaseImage = getEnv("TUPRWRE_BASE_IMAGE", cfg.DefaultBaseImage)
 	cfg.ContainerRuntime = getEnv("TUPRWRE_RUNTIME", cfg.ContainerRuntime)
+	cfg.DefaultMemory = getEnv("TUPRWRE_DEFAULT_MEMORY", cfg.DefaultMemory)
+	cfg.DefaultCPUs = getEnv("TUPRWRE_DEFAULT_CPUS", cfg.DefaultCPUs)
 
 	envIntercept := getEnvSlice("TUPRWRE_INTERCEPT")
 	if envIntercept != nil {

@@ -243,3 +243,44 @@ func TestRunInstallScriptModeValidation(t *testing.T) {
 		t.Fatalf("unexpected script args after --: %#v", captured.installScriptArgs)
 	}
 }
+
+func TestRunInstallResumeContainerSkipsResourceResolution(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+
+	origFlow := installFlow
+	origReader := installArgsReader
+	origContainerID := installContainerID
+	origMemoryLimit := installMemoryLimit
+	t.Cleanup(func() {
+		installFlow = origFlow
+		installArgsReader = origReader
+		installContainerID = origContainerID
+		installMemoryLimit = origMemoryLimit
+	})
+
+	installContainerID = "fake-container-id"
+	installMemoryLimit = "not-a-size"
+	installArgsReader = func() []string { return []string{"tuprwre", "install", "--", "echo", "ok"} }
+
+	called := false
+	var gotReq installRequest
+	installFlow = func(_ *cobra.Command, _ *config.Config, req installRequest) error {
+		called = true
+		gotReq = req
+		return nil
+	}
+
+	if err := runInstall(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runInstall failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected installFlow to be called")
+	}
+	if gotReq.containerID != installContainerID {
+		t.Fatalf("unexpected containerID: got=%q want=%q", gotReq.containerID, installContainerID)
+	}
+	if gotReq.memoryLimit != installMemoryLimit {
+		t.Fatalf("unexpected memory limit: got=%q want=%q", gotReq.memoryLimit, installMemoryLimit)
+	}
+}

@@ -1,14 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/docker/go-units"
-	"github.com/spf13/cobra"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -104,14 +104,12 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 	}
 	volumes = append(volumes, cwdMount)
 
-	// Parse memory limit if provided
-	var memoryLimit int64
-	if runMemoryLimit != "" {
-		parsed, err := units.RAMInBytes(runMemoryLimit)
-		if err != nil {
-			return fmt.Errorf("invalid memory limit %q: %w", runMemoryLimit, err)
-		}
-		memoryLimit = parsed
+	// Resolve resource limits: CLI flags override config defaults
+	ctx := context.Background()
+	spec := sandbox.MergeResourceSpec(runMemoryLimit, runCPULimit, cfg.DefaultMemory, cfg.DefaultCPUs)
+	resources, err := sb.ResolveResourceSpec(ctx, spec)
+	if err != nil {
+		return fmt.Errorf("failed to resolve resource limits: %w", err)
 	}
 
 	// Build run options
@@ -131,8 +129,8 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 		CaptureFile: runCaptureFile,
 		ReadOnlyCwd: runReadOnlyCwd,
 		NoNetwork:   runNoNetwork,
-		MemoryLimit: memoryLimit,
-		CPULimit:    runCPULimit,
+		MemoryLimit: resources.Memory,
+		CPULimit:    resources.CPUs,
 	}
 
 	// Execute in sandbox
