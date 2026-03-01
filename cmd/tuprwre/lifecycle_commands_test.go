@@ -93,6 +93,158 @@ func TestRunListCommandNoShims(t *testing.T) {
 	}
 }
 
+func setListMode(t *testing.T, workspace, global bool) {
+	t.Helper()
+	prevWorkspace := listWorkspace
+	prevGlobal := listGlobal
+	listWorkspace = workspace
+	listGlobal = global
+	t.Cleanup(func() {
+		listWorkspace = prevWorkspace
+		listGlobal = prevGlobal
+	})
+}
+
+func TestRunListWorkspaceFilter(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+	t.Setenv("HOME", tempHome)
+
+	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, ".tuprwre"), 0755); err != nil {
+		t.Fatalf("create workspace dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ".tuprwre", "config.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatalf("write workspace config: %v", err)
+	}
+	t.Chdir(workspaceRoot)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	gen := shim.NewGenerator(cfg)
+
+	// Seed a workspace shim
+	seedLifecycleShimWithMetadata(t, gen, "ws-tool")
+	wsMeta, _ := gen.LoadMetadata("ws-tool")
+	wsMeta.Workspace = workspaceRoot
+	if err := gen.SaveMetadata(wsMeta); err != nil {
+		t.Fatalf("update ws metadata: %v", err)
+	}
+
+	// Seed a global shim (no workspace)
+	seedLifecycleShimWithMetadata(t, gen, "global-tool")
+
+	// Test --workspace filter
+	setListMode(t, true, false)
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList --workspace failed: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "ws-tool") {
+		t.Fatalf("expected ws-tool in workspace list, got: %q", output)
+	}
+	if strings.Contains(output, "global-tool") {
+		t.Fatalf("expected global-tool excluded from workspace list, got: %q", output)
+	}
+}
+
+func TestRunListGlobalFilter(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+	t.Setenv("HOME", tempHome)
+
+	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, ".tuprwre"), 0755); err != nil {
+		t.Fatalf("create workspace dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ".tuprwre", "config.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatalf("write workspace config: %v", err)
+	}
+	t.Chdir(workspaceRoot)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	gen := shim.NewGenerator(cfg)
+
+	// Seed a workspace shim
+	seedLifecycleShimWithMetadata(t, gen, "ws-tool")
+	wsMeta, _ := gen.LoadMetadata("ws-tool")
+	wsMeta.Workspace = workspaceRoot
+	if err := gen.SaveMetadata(wsMeta); err != nil {
+		t.Fatalf("update ws metadata: %v", err)
+	}
+
+	// Seed a global shim (no workspace)
+	seedLifecycleShimWithMetadata(t, gen, "global-tool")
+
+	// Test --global filter
+	setListMode(t, false, true)
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList --global failed: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "global-tool") {
+		t.Fatalf("expected global-tool in global list, got: %q", output)
+	}
+	if strings.Contains(output, "ws-tool") {
+		t.Fatalf("expected ws-tool excluded from global list, got: %q", output)
+	}
+}
+
+func TestRunListNoFilterShowsAll(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("TUPRWRE_DIR", tempHome)
+	t.Setenv("HOME", tempHome)
+
+	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, ".tuprwre"), 0755); err != nil {
+		t.Fatalf("create workspace dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ".tuprwre", "config.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatalf("write workspace config: %v", err)
+	}
+	t.Chdir(workspaceRoot)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	gen := shim.NewGenerator(cfg)
+
+	seedLifecycleShimWithMetadata(t, gen, "ws-tool")
+	wsMeta, _ := gen.LoadMetadata("ws-tool")
+	wsMeta.Workspace = workspaceRoot
+	if err := gen.SaveMetadata(wsMeta); err != nil {
+		t.Fatalf("update ws metadata: %v", err)
+	}
+	seedLifecycleShimWithMetadata(t, gen, "global-tool")
+
+	setListMode(t, false, false)
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList failed: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "ws-tool") {
+		t.Fatalf("expected ws-tool in unfiltered list, got: %q", output)
+	}
+	if !strings.Contains(output, "global-tool") {
+		t.Fatalf("expected global-tool in unfiltered list, got: %q", output)
+	}
+}
+
 func TestRunRemoveCommandExistingAndMissingShim(t *testing.T) {
 	setRemoveMode(t, false, false)
 
