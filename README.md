@@ -11,6 +11,13 @@
 
 `tuprwre` is an action-level sandbox for AI and automation environments. It intercepts dangerous install commands on the host, runs those install scripts in disposable Docker containers, then publishes host-side shims for safe tool execution.
 
+## TL;DR
+
+- Agent tries `apt` / `npm -g` / `pip` on host → `tuprwre` intercepts it.
+- You run `tuprwre install -- "<command>"` and it executes safely in an ephemeral Docker container.
+- `tuprwre` discovers installed binaries and creates transparent host shims in `~/.tuprwre/bin`.
+- Result: agents get their tools, your host stays clean.
+
 [![Demo](https://asciinema.org/a/lGrhGS4fVlOgWuvO.svg)](https://asciinema.org/a/lGrhGS4fVlOgWuvO)
 
 [More demos →](docs/demos.md)
