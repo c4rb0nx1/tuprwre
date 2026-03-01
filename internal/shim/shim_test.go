@@ -316,6 +316,36 @@ func TestMetadataSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestMetadataRoundTripsWorkspaceField(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		BaseDir: tmpDir,
+		ShimDir: filepath.Join(tmpDir, "bin"),
+	}
+	if err := os.MkdirAll(cfg.ShimDir, 0o755); err != nil {
+		t.Fatalf("failed to create shim dir: %v", err)
+	}
+
+	gen := NewGenerator(cfg)
+	meta := Metadata{
+		BinaryName:  "tool",
+		Workspace:   "/home/user/project",
+		InstalledAt: "2026-03-01T00:00:00Z",
+	}
+
+	if err := gen.SaveMetadata(meta); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	loaded, err := gen.LoadMetadata("tool")
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if loaded.Workspace != "/home/user/project" {
+		t.Fatalf("expected workspace '/home/user/project', got %q", loaded.Workspace)
+	}
+}
+
 func TestLoadMetadata_NotFound(t *testing.T) {
 	gen, _ := setupTestGenerator(t)
 

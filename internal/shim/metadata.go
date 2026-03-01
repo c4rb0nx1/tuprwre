@@ -19,6 +19,7 @@ type Metadata struct {
 	OutputImage       string   `json:"output_image"`
 	InstalledAt       string   `json:"installed_timestamp"`
 	InstallForceUsed  bool     `json:"install_force"`
+	Workspace         string   `json:"workspace,omitempty"`
 }
 
 func (g *Generator) metadataDir() string {

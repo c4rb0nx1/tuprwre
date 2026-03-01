@@ -265,6 +265,7 @@ func runInstallFlow(cmd *cobra.Command, cfg *config.Config, req installRequest) 
 				OutputImage:       imageName,
 				InstalledAt:       time.Now().UTC().Format(time.RFC3339),
 				InstallForceUsed:  req.force,
+				Workspace:         cfg.WorkspaceRoot,
 			}
 			if err := shimGen.SaveMetadata(metadata); err != nil {
 				cmd.Printf("Warning: failed to persist metadata for %s: %v\n", binary.Name, err)

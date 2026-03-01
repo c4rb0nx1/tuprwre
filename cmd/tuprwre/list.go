@@ -35,7 +35,12 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	sort.Strings(shims)
 	for _, item := range shims {
-		_, _ = fmt.Fprintln(out, item)
+		meta, err := shimGen.LoadMetadata(item)
+		if err == nil && meta.Workspace != "" {
+			_, _ = fmt.Fprintf(out, "%s  (workspace: %s)\n", item, meta.Workspace)
+		} else {
+			_, _ = fmt.Fprintln(out, item)
+		}
 	}
 
 	return nil
