@@ -122,6 +122,9 @@ tuprwre doctor
 tuprwre doctor --json
 ```
 
+Detailed command manual: [CLI Reference](docs/cli.md)
+For terminal help: `tuprwre --help` and `tuprwre <command> --help`.
+
 ## Configuration
 
 tuprwre uses layered JSON config (highest priority wins):
