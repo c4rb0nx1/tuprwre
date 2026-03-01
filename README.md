@@ -14,9 +14,9 @@
 ## TL;DR
 
 - Agent tries `apt` / `npm -g` / `pip` on host → `tuprwre` intercepts it.
-- You run `tuprwre install -- "<command>"` and it executes safely in an ephemeral Docker container.
+- The install can be executed by you or directly by the agent via `tuprwre install -- "<command>"` in an ephemeral Docker container.
 - `tuprwre` discovers installed binaries and creates transparent host shims in `~/.tuprwre/bin`.
-- Result: agents get their tools, your host stays clean.
+- Outcome: installed CLIs are available through shims without mutating the host environment.
 
 [![Demo](https://asciinema.org/a/lGrhGS4fVlOgWuvO.svg)](https://asciinema.org/a/lGrhGS4fVlOgWuvO)
 
