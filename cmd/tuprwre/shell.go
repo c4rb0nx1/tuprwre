@@ -8,22 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/spf13/cobra"
 )
 
-// dangerousCommands lists commands that should be intercepted and routed through tuprwre
-var dangerousCommands = []string{
-	"apt",
-	"apt-get",
-	"npm",
-	"pip",
-	"pip3",
-	"curl",
-	"wget",
-}
-
 var (
 	shellCommand    string
+	shellIntercept  []string
+	shellAllow      []string
 	shellExec                 = exec.Command
 	shellExit                 = os.Exit
 	shellArgsReader           = func() []string { return os.Args }
@@ -74,6 +66,39 @@ func runShell(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	interceptList := cfg.InterceptCommands
+	for _, command := range shellIntercept {
+		found := false
+		for _, existing := range interceptList {
+			if existing == command {
+				found = true
+				break
+			}
+		}
+		if !found {
+			interceptList = append(interceptList, command)
+		}
+	}
+
+	if len(shellAllow) > 0 {
+		allowSet := make(map[string]bool, len(shellAllow))
+		for _, command := range shellAllow {
+			allowSet[command] = true
+		}
+		filtered := make([]string, 0, len(interceptList))
+		for _, command := range interceptList {
+			if !allowSet[command] {
+				filtered = append(filtered, command)
+			}
+		}
+		interceptList = filtered
+	}
+
 	// Create a temporary directory for wrapper scripts
 	wrapperDir, err := os.MkdirTemp("", "tuprwre-shell-*")
 	if err != nil {
@@ -81,8 +106,8 @@ func runShell(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanupWrapperDir(wrapperDir)
 
-	// Generate wrapper scripts for dangerous commands
-	if err := generateWrappers(wrapperDir); err != nil {
+	// Generate wrapper scripts for intercepted commands
+	if err := generateWrappers(wrapperDir, interceptList); err != nil {
 		return fmt.Errorf("failed to generate wrapper scripts: %w", err)
 	}
 
@@ -102,7 +127,12 @@ func runShell(cmd *cobra.Command, args []string) error {
 
 	if !hasCommand {
 		fmt.Fprintf(shellStderr, "[tuprwre] Starting protected shell (%s)...\n", shell)
-		fmt.Fprintln(shellStderr, "[tuprwre] Dangerous commands (apt, npm, pip, curl, etc.) are intercepted")
+
+		interceptPreview := strings.Join(interceptList, ", ")
+		if len(interceptList) > 5 {
+			interceptPreview = strings.Join(interceptList[:5], ", ") + ", ..."
+		}
+		fmt.Fprintf(shellStderr, "[tuprwre] Dangerous commands (%s) are intercepted\n", interceptPreview)
 		fmt.Fprintln(shellStderr, "[tuprwre] Type 'exit' to return to normal shell")
 	}
 
@@ -178,8 +208,8 @@ func parseShellCommandFromArgv(argv []string) (string, bool, error) {
 }
 
 // generateWrappers creates wrapper scripts for dangerous commands
-func generateWrappers(wrapperDir string) error {
-	for _, cmdName := range dangerousCommands {
+func generateWrappers(wrapperDir string, commands []string) error {
+	for _, cmdName := range commands {
 		wrapperPath := filepath.Join(wrapperDir, cmdName)
 		wrapperScript := generateWrapperScript(cmdName)
 
@@ -244,4 +274,6 @@ func cleanupWrapperDir(dir string) {
 
 func init() {
 	shellCmd.Flags().StringVarP(&shellCommand, "command", "c", "", "Run command string in non-interactive mode")
+	shellCmd.Flags().StringArrayVar(&shellIntercept, "intercept", nil, "Additional commands to intercept")
+	shellCmd.Flags().StringArrayVar(&shellAllow, "allow", nil, "Commands to exclude from interception")
 }

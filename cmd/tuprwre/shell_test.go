@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +16,8 @@ func runShellWithTestHarness(t *testing.T, argv []string, commandFlag string, co
 	t.Helper()
 
 	prevCommand := shellCommand
+	prevIntercept := append([]string{}, shellIntercept...)
+	prevAllow := append([]string{}, shellAllow...)
 	prevExec := shellExec
 	prevExit := shellExit
 	prevArgsReader := shellArgsReader
@@ -33,6 +36,7 @@ func runShellWithTestHarness(t *testing.T, argv []string, commandFlag string, co
 	shellStdin = strings.NewReader("")
 	shellStdout = stdout
 	shellStderr = stderr
+	_ = os.Setenv("HOME", t.TempDir())
 	shellExit = func(code int) {
 		exitCode = code
 	}
@@ -43,6 +47,8 @@ func runShellWithTestHarness(t *testing.T, argv []string, commandFlag string, co
 
 	t.Cleanup(func() {
 		shellCommand = prevCommand
+		shellIntercept = prevIntercept
+		shellAllow = prevAllow
 		shellExec = prevExec
 		shellExit = prevExit
 		shellArgsReader = prevArgsReader
@@ -125,6 +131,86 @@ func TestRunShellCommandModeWorksAndIsSilent(t *testing.T) {
 	}
 	if strings.Contains(stderr, "[tuprwre] Starting protected shell") || strings.Contains(stderr, "[tuprwre] Exited protected shell") {
 		t.Fatalf("stderr contains forbidden banner text: %q", stderr)
+	}
+}
+
+func TestShellInterceptFlag(t *testing.T) {
+	shellIntercept = []string{"brew"}
+
+	exitCode, stdout, stderr, err := runShellWithTestHarness(
+		t,
+		[]string{"tuprwre", "shell", "-c", `if [ -f "$TUPRWRE_WRAPPER_DIR/brew" ] ; then echo "ok"; fi`},
+		"",
+		nil,
+	)
+
+	if err != nil {
+		t.Fatalf("runShell returned error: %v", err)
+	}
+	if exitCode != -1 {
+		t.Fatalf("unexpected forced exit code: %d", exitCode)
+	}
+	if stdout != "ok\n" {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+}
+
+func TestShellAllowFlag(t *testing.T) {
+	shellAllow = []string{"curl"}
+
+	exitCode, stdout, stderr, err := runShellWithTestHarness(
+		t,
+		[]string{"tuprwre", "shell", "-c", `if [ -f "$TUPRWRE_WRAPPER_DIR/apt" ] && [ ! -f "$TUPRWRE_WRAPPER_DIR/curl" ] ; then echo "ok"; fi`},
+		"",
+		nil,
+	)
+
+	if err != nil {
+		t.Fatalf("runShell returned error: %v", err)
+	}
+	if exitCode != -1 {
+		t.Fatalf("unexpected forced exit code: %d", exitCode)
+	}
+	if stdout != "ok\n" {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+}
+
+func TestGenerateWrappersCustomList(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := generateWrappers(tmpDir, []string{"brew", "cargo"}); err != nil {
+		t.Fatalf("generateWrappers returned error: %v", err)
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("read temp dir: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("unexpected wrapper count: %d", len(entries))
+	}
+
+	brewPath := filepath.Join(tmpDir, "brew")
+	cargoPath := filepath.Join(tmpDir, "cargo")
+	brewScript, err := os.ReadFile(brewPath)
+	if err != nil {
+		t.Fatalf("read brew wrapper: %v", err)
+	}
+	cargoScript, err := os.ReadFile(cargoPath)
+	if err != nil {
+		t.Fatalf("read cargo wrapper: %v", err)
+	}
+	if !strings.Contains(string(brewScript), "tuprwre wrapper for brew") {
+		t.Fatalf("brew wrapper content missing brew reference")
+	}
+	if !strings.Contains(string(cargoScript), "tuprwre wrapper for cargo") {
+		t.Fatalf("cargo wrapper content missing cargo reference")
 	}
 }
 
