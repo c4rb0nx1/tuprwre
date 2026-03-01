@@ -45,4 +45,5 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(shellCmd)
+	rootCmd.AddCommand(initCmd)
 }
