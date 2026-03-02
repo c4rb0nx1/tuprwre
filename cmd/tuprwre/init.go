@@ -28,8 +28,8 @@ type initConfig struct {
 	Allow         []string `json:"allow"`
 	BaseImage     string   `json:"base_image"`
 	Runtime       string   `json:"runtime"`
-	DefaultMemory string   `json:"default_memory"`
-	DefaultCPUs   string   `json:"default_cpus"`
+	DefaultMemory string   `json:"default_memory,omitempty"`
+	DefaultCPUs   string   `json:"default_cpus,omitempty"`
 }
 
 func init() {

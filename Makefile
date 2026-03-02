@@ -1,4 +1,4 @@
-.PHONY: all build build-all test test-coverage stress-output-race clean install install-system uninstall fmt lint deps verify dev run help
+.PHONY: all build build-all test test-integration test-coverage stress-output-race bench-latency clean install install-system uninstall fmt lint deps verify dev run help
 
 # Binary name
 BINARY_NAME=tuprwre
@@ -54,6 +54,16 @@ test:
 
 stress-output-race:
 	@./scripts/stress-run-output-race.sh ubuntu:22.04 50
+
+# BENCH_ARGS: pass custom flags, e.g. make bench-latency BENCH_ARGS="--count 50 --json"
+BENCH_ARGS ?=
+bench-latency:
+	@./scripts/bench-shim-latency.sh $(BENCH_ARGS)
+
+# Run integration tests (requires Docker)
+test-integration: build
+	@echo "Running integration tests (requires Docker)..."
+	$(GOTEST) -tags integration -v -count=1 -timeout 5m ./tests/integration/...
 
 # Run tests with coverage
 test-coverage:
@@ -164,4 +174,6 @@ help:
 	@echo "  verify        - Verify dependencies"
 	@echo "  dev           - Build development version"
 	@echo "  run           - Build and run the binary"
+	@echo "  test-integration - Run integration tests (requires Docker)"
+	@echo "  bench-latency - Benchmark shim invocation latency"
 	@echo "  help          - Show this help"

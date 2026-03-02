@@ -17,3 +17,16 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: go build ./cmd/tuprwre
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: make test-integration
