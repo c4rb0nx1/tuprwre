@@ -65,6 +65,11 @@ test-integration: build
 	@echo "Running integration tests (requires Docker)..."
 	$(GOTEST) -tags integration -v -count=1 -timeout 5m ./tests/integration/...
 
+# Benchmark Go SDK exec latency (warm pool hard gate)
+bench-exec-sdk:
+	@echo "Running Go SDK exec benchmark (hard gate: p50 < 80ms)..."
+	$(GOTEST) -v -run 'TestExecBenchmark$$' -timeout 5m ./internal/sandbox/...
+
 # Run tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."

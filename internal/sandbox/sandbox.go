@@ -618,6 +618,12 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 		return 1, err
 	}
 
+	// Exec path: if a container ID is provided, run via docker exec instead of
+	// creating a new container. This is the foundation for the warm pool.
+	if opts.ContainerID != "" {
+		return d.runViaExec(ctx, opts)
+	}
+
 	diag := runIODiagnostics{
 		textEnabled: opts.DebugIO,
 		jsonEnabled: opts.DebugIOJSON,
@@ -718,6 +724,50 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 	}
 
 	return d.runAttachedAndDrain(ctx, resp.ID, opts.Stdin, stdout, stderr, diag)
+}
+
+// runViaExec routes a run through docker exec on an existing container.
+// This is the exec path used when RunOptions.ContainerID is set.
+// Container-level settings (NoNetwork, Volumes, ReadOnlyCwd, MemoryLimit, CPULimit)
+// are assumed to already be configured on the target container.
+func (d *DockerRuntime) runViaExec(ctx context.Context, opts RunOptions) (int, error) {
+	currentUser, err := user.Current()
+	if err != nil {
+		return 1, fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	cmd := append([]string{opts.Binary}, opts.Args...)
+
+	stdout := opts.Stdout
+	stderr := opts.Stderr
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	var captureFile *os.File
+	if opts.CaptureFile != "" {
+		captureFile, err = os.Create(opts.CaptureFile)
+		if err != nil {
+			return 1, fmt.Errorf("failed to create capture file: %w", err)
+		}
+		defer captureFile.Close()
+		stdout = io.MultiWriter(stdout, captureFile)
+		stderr = io.MultiWriter(stderr, captureFile)
+	}
+
+	return d.ExecWithExitCode(ctx, ExecOptions{
+		ContainerID: opts.ContainerID,
+		Cmd:         cmd,
+		Env:         opts.Env,
+		WorkDir:     opts.WorkDir,
+		User:        fmt.Sprintf("%s:%s", currentUser.Uid, currentUser.Gid),
+		Stdin:       opts.Stdin,
+		Stdout:      stdout,
+		Stderr:      stderr,
+	})
 }
 
 // ListExecutables returns all executable files in the container's PATH.

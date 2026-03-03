@@ -7,6 +7,7 @@
 # Local planning/state artifacts
 /.beads/
 /.tuprwre/research/
+/.tuprwre/maintainability-report.md
 AGENTS.md
 launchpad_action_items.md
 starship_action_items.md

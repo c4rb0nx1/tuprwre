@@ -23,6 +23,7 @@ var (
 	runNoNetwork      bool
 	runMemoryLimit    string
 	runCPULimit       float64
+	runContainerID    string
 	// For Containerd migration (future)
 	runRuntime string
 )
@@ -60,6 +61,8 @@ func init() {
 	runCmd.Flags().BoolVar(&runNoNetwork, "no-network", false, "Disable network access inside the container")
 	runCmd.Flags().StringVar(&runMemoryLimit, "memory", "", "Memory limit for the container (e.g. 512m, 1g)")
 	runCmd.Flags().Float64Var(&runCPULimit, "cpus", 0, "CPU limit for the container (e.g. 0.5, 1.0, 2.0)")
+	runCmd.Flags().StringVar(&runContainerID, "container-id", "", "Run command in an existing container via exec (debug/testing)")
+	_ = runCmd.Flags().MarkHidden("container-id")
 
 	_ = runCmd.MarkFlagRequired("image")
 }
@@ -115,6 +118,7 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 	// Build run options
 	opts := sandbox.RunOptions{
 		Image:       runContainerImage,
+		ContainerID: runContainerID,
 		Binary:      binaryName,
 		Args:        binaryArgs,
 		WorkDir:     workDir,
