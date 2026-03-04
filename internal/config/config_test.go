@@ -38,6 +38,18 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.ContainerRuntime != "docker" {
 		t.Fatalf("ContainerRuntime = %q, want %q", cfg.ContainerRuntime, "docker")
 	}
+	if !cfg.WarmPoolEnabled {
+		t.Fatalf("WarmPoolEnabled = %v, want %v", cfg.WarmPoolEnabled, true)
+	}
+	if cfg.WarmPoolMaxPerKey != 1 {
+		t.Fatalf("WarmPoolMaxPerKey = %d, want %d", cfg.WarmPoolMaxPerKey, 1)
+	}
+	if cfg.WarmPoolMaxTotal != 5 {
+		t.Fatalf("WarmPoolMaxTotal = %d, want %d", cfg.WarmPoolMaxTotal, 5)
+	}
+	if cfg.WarmPoolTTL != "10m" {
+		t.Fatalf("WarmPoolTTL = %q, want %q", cfg.WarmPoolTTL, "10m")
+	}
 
 	expectedIntercept := []string{"apt", "apt-get", "pip", "pip3", "curl", "wget"}
 	if !reflect.DeepEqual(cfg.InterceptCommands, expectedIntercept) {
@@ -80,7 +92,7 @@ func TestLoad_CreatesDirectories(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	for _, dir := range []string{cfg.BaseDir, cfg.ShimDir, cfg.ContainerDir} {
+	for _, dir := range []string{cfg.BaseDir, cfg.ShimDir, cfg.ContainerDir, cfg.PoolDir} {
 		info, statErr := os.Stat(dir)
 		if statErr != nil {
 			t.Fatalf("directory %q not created: %v", dir, statErr)
@@ -336,5 +348,37 @@ func TestLoadMerge_DefaultInterceptList(t *testing.T) {
 	expected := []string{"apt", "apt-get", "pip", "pip3", "curl", "wget"}
 	if !reflect.DeepEqual(cfg.InterceptCommands, expected) {
 		t.Fatalf("InterceptCommands = %v, want %v", cfg.InterceptCommands, expected)
+	}
+}
+
+func TestLoad_WarmPoolEnvDisable(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("TUPRWRE_DIR", filepath.Join(tempHome, "runtime"))
+	t.Setenv("TUPRWRE_WARM_POOL", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.WarmPoolEnabled {
+		t.Fatalf("WarmPoolEnabled = %v, want %v", cfg.WarmPoolEnabled, false)
+	}
+}
+
+func TestLoad_WarmPoolTTLEnvOverride(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("TUPRWRE_DIR", filepath.Join(tempHome, "runtime"))
+	t.Setenv("TUPRWRE_WARM_POOL_TTL", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.WarmPoolTTL != "30m" {
+		t.Fatalf("WarmPoolTTL = %q, want %q", cfg.WarmPoolTTL, "30m")
 	}
 }

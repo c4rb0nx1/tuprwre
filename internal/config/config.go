@@ -44,15 +44,25 @@ type Config struct {
 	// Supports absolute values ("2.0") or host-relative percentages ("50%").
 	// Empty string means no limit.
 	DefaultCPUs string
+
+	WarmPoolEnabled   bool
+	WarmPoolMaxPerKey int
+	WarmPoolMaxTotal  int
+	WarmPoolTTL       string
+	PoolDir           string
 }
 
 type fileConfig struct {
-	Intercept     []string `json:"intercept,omitempty"`
-	Allow         []string `json:"allow,omitempty"`
-	BaseImage     string   `json:"base_image,omitempty"`
-	Runtime       string   `json:"runtime,omitempty"`
-	DefaultMemory string   `json:"default_memory,omitempty"`
-	DefaultCPUs   string   `json:"default_cpus,omitempty"`
+	Intercept         []string `json:"intercept,omitempty"`
+	Allow             []string `json:"allow,omitempty"`
+	BaseImage         string   `json:"base_image,omitempty"`
+	Runtime           string   `json:"runtime,omitempty"`
+	DefaultMemory     string   `json:"default_memory,omitempty"`
+	DefaultCPUs       string   `json:"default_cpus,omitempty"`
+	WarmPool          *bool    `json:"warm_pool,omitempty"`
+	WarmPoolMaxPerKey *int     `json:"warm_pool_max_per_key,omitempty"`
+	WarmPoolMaxTotal  *int     `json:"warm_pool_max_total,omitempty"`
+	WarmPoolTTL       string   `json:"warm_pool_ttl,omitempty"`
 }
 
 var defaultBaseImage = "ubuntu:22.04"
@@ -197,10 +207,15 @@ func Load() (*Config, error) {
 		BaseDir:           baseDir,
 		ShimDir:           filepath.Join(baseDir, "bin"),
 		ContainerDir:      filepath.Join(baseDir, "containers"),
+		PoolDir:           filepath.Join(baseDir, "containers", "pool"),
 		WorkspaceRoot:     workspaceRoot,
 		DefaultBaseImage:  defaultBaseImage,
 		ContainerRuntime:  defaultRuntime,
 		InterceptCommands: copySlice(defaultInterceptCommands),
+		WarmPoolEnabled:   true,
+		WarmPoolMaxPerKey: 1,
+		WarmPoolMaxTotal:  5,
+		WarmPoolTTL:       "10m",
 	}
 
 	if globalConfig != nil {
@@ -221,6 +236,18 @@ func Load() (*Config, error) {
 		}
 		if globalConfig.DefaultCPUs != "" {
 			cfg.DefaultCPUs = globalConfig.DefaultCPUs
+		}
+		if globalConfig.WarmPool != nil {
+			cfg.WarmPoolEnabled = *globalConfig.WarmPool
+		}
+		if globalConfig.WarmPoolMaxPerKey != nil {
+			cfg.WarmPoolMaxPerKey = *globalConfig.WarmPoolMaxPerKey
+		}
+		if globalConfig.WarmPoolMaxTotal != nil {
+			cfg.WarmPoolMaxTotal = *globalConfig.WarmPoolMaxTotal
+		}
+		if globalConfig.WarmPoolTTL != "" {
+			cfg.WarmPoolTTL = globalConfig.WarmPoolTTL
 		}
 	}
 
@@ -243,12 +270,30 @@ func Load() (*Config, error) {
 		if workspaceConfig.DefaultCPUs != "" {
 			cfg.DefaultCPUs = workspaceConfig.DefaultCPUs
 		}
+		if workspaceConfig.WarmPool != nil {
+			cfg.WarmPoolEnabled = *workspaceConfig.WarmPool
+		}
+		if workspaceConfig.WarmPoolMaxPerKey != nil {
+			cfg.WarmPoolMaxPerKey = *workspaceConfig.WarmPoolMaxPerKey
+		}
+		if workspaceConfig.WarmPoolMaxTotal != nil {
+			cfg.WarmPoolMaxTotal = *workspaceConfig.WarmPoolMaxTotal
+		}
+		if workspaceConfig.WarmPoolTTL != "" {
+			cfg.WarmPoolTTL = workspaceConfig.WarmPoolTTL
+		}
 	}
 
 	cfg.DefaultBaseImage = getEnv("TUPRWRE_BASE_IMAGE", cfg.DefaultBaseImage)
 	cfg.ContainerRuntime = getEnv("TUPRWRE_RUNTIME", cfg.ContainerRuntime)
 	cfg.DefaultMemory = getEnv("TUPRWRE_DEFAULT_MEMORY", cfg.DefaultMemory)
 	cfg.DefaultCPUs = getEnv("TUPRWRE_DEFAULT_CPUS", cfg.DefaultCPUs)
+	if v := os.Getenv("TUPRWRE_WARM_POOL"); v != "" {
+		cfg.WarmPoolEnabled = v != "0" && strings.ToLower(v) != "false"
+	}
+	if v := os.Getenv("TUPRWRE_WARM_POOL_TTL"); v != "" {
+		cfg.WarmPoolTTL = v
+	}
 
 	envIntercept := getEnvSlice("TUPRWRE_INTERCEPT")
 	if envIntercept != nil {
@@ -258,7 +303,7 @@ func Load() (*Config, error) {
 	cfg.InterceptCommands = applyAllowExceptions(cfg.InterceptCommands, cfg.AllowCommands)
 
 	// Ensure required directories exist
-	for _, dir := range []string{cfg.BaseDir, cfg.ShimDir, cfg.ContainerDir} {
+	for _, dir := range []string{cfg.BaseDir, cfg.ShimDir, cfg.ContainerDir, cfg.PoolDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}

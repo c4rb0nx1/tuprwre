@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/c4rb0nx1/tuprwre/internal/config"
 	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
+	"github.com/c4rb0nx1/tuprwre/internal/sandbox/pool"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +25,7 @@ var (
 	runNoNetwork      bool
 	runMemoryLimit    string
 	runCPULimit       float64
+	runNoPool         bool
 	runContainerID    string
 	// For Containerd migration (future)
 	runRuntime string
@@ -61,6 +64,7 @@ func init() {
 	runCmd.Flags().BoolVar(&runNoNetwork, "no-network", false, "Disable network access inside the container")
 	runCmd.Flags().StringVar(&runMemoryLimit, "memory", "", "Memory limit for the container (e.g. 512m, 1g)")
 	runCmd.Flags().Float64Var(&runCPULimit, "cpus", 0, "CPU limit for the container (e.g. 0.5, 1.0, 2.0)")
+	runCmd.Flags().BoolVar(&runNoPool, "no-pool", false, "Disable warm container pool, use cold path")
 	runCmd.Flags().StringVar(&runContainerID, "container-id", "", "Run command in an existing container via exec (debug/testing)")
 	_ = runCmd.Flags().MarkHidden("container-id")
 
@@ -99,9 +103,13 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 		workDir = cwd
 	}
 
-	// Build volume mounts: always mount current directory for host file access
 	volumes := append([]string{}, runVolumes...)
-	cwdMount := fmt.Sprintf("%s:%s", cwd, cwd)
+	mountRoot := cwd
+	if cfg.WorkspaceRoot != "" && pathIsInside(cwd, cfg.WorkspaceRoot) {
+		mountRoot = cfg.WorkspaceRoot
+	}
+	mountRoot = pool.CanonicalizePath(mountRoot)
+	cwdMount := fmt.Sprintf("%s:%s", mountRoot, mountRoot)
 	if runReadOnlyCwd {
 		cwdMount += ":ro"
 	}
@@ -135,6 +143,7 @@ func runSandboxed(cmd *cobra.Command, args []string) error {
 		NoNetwork:   runNoNetwork,
 		MemoryLimit: resources.Memory,
 		CPULimit:    resources.CPUs,
+		NoPool:      runNoPool,
 	}
 
 	// Execute in sandbox
@@ -156,4 +165,14 @@ func validateRunRuntime(runtime string) error {
 	default:
 		return fmt.Errorf("runtime %q is not supported (supported: docker, containerd)", runtime)
 	}
+}
+
+func pathIsInside(child, parent string) bool {
+	child = pool.CanonicalizePath(child)
+	parent = pool.CanonicalizePath(parent)
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, "..")
 }

@@ -4,6 +4,7 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/sandbox/pool"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
@@ -26,6 +28,7 @@ import (
 type DockerRuntime struct {
 	config *config.Config
 	client *client.Client
+	pool   *pool.WarmPool
 }
 
 type TuprwreImage struct {
@@ -63,6 +66,7 @@ type RunOptions struct {
 	NoNetwork   bool
 	MemoryLimit int64   // bytes; 0 means no limit
 	CPULimit    float64 // number of CPUs; 0 means no limit
+	NoPool      bool
 }
 
 type runIODiagnostics struct {
@@ -145,6 +149,29 @@ func (d *DockerRuntime) initClient() error {
 	}
 
 	d.client = cli
+	return nil
+}
+
+func (d *DockerRuntime) initPool() error {
+	if d.pool != nil {
+		return nil
+	}
+	if !d.config.WarmPoolEnabled {
+		return nil
+	}
+	if err := d.initClient(); err != nil {
+		return err
+	}
+	ttl, err := time.ParseDuration(d.config.WarmPoolTTL)
+	if err != nil {
+		ttl = 10 * time.Minute
+	}
+	d.pool = pool.NewWarmPool(d.client, pool.PoolConfig{
+		PoolDir:   d.config.PoolDir,
+		MaxPerKey: d.config.WarmPoolMaxPerKey,
+		MaxTotal:  d.config.WarmPoolMaxTotal,
+		TTL:       ttl,
+	})
 	return nil
 }
 
@@ -618,6 +645,21 @@ func (d *DockerRuntime) runWithContext(ctx context.Context, opts RunOptions) (in
 		return 1, err
 	}
 
+	if !opts.NoPool && opts.ContainerID == "" && strings.EqualFold(strings.TrimSpace(opts.Runtime), "docker") {
+		if err := d.initPool(); err == nil && d.pool != nil {
+			exitCode, err := d.runViaPool(ctx, opts)
+			if err == nil {
+				return exitCode, nil
+			}
+			if ctx.Err() != nil {
+				return exitCode, err
+			}
+			if !errors.Is(err, pool.ErrPoolExhausted) {
+				return exitCode, err
+			}
+		}
+	}
+
 	// Exec path: if a container ID is provided, run via docker exec instead of
 	// creating a new container. This is the foundation for the warm pool.
 	if opts.ContainerID != "" {
@@ -768,6 +810,69 @@ func (d *DockerRuntime) runViaExec(ctx context.Context, opts RunOptions) (int, e
 		Stdout:      stdout,
 		Stderr:      stderr,
 	})
+}
+
+func (d *DockerRuntime) runViaPool(ctx context.Context, opts RunOptions) (int, error) {
+	currentUser, err := user.Current()
+	if err != nil {
+		return 1, fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	key := pool.PoolKey{
+		Image:     opts.Image,
+		NoNetwork: opts.NoNetwork,
+		Memory:    opts.MemoryLimit,
+		CPUs:      opts.CPULimit,
+		User:      fmt.Sprintf("%s:%s", currentUser.Uid, currentUser.Gid),
+		Binds:     opts.Volumes,
+		Runtime:   opts.Runtime,
+	}
+
+	lease, err := d.pool.Acquire(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	defer d.pool.Release(context.Background(), lease)
+
+	cmd := append([]string{opts.Binary}, opts.Args...)
+
+	stdout := opts.Stdout
+	stderr := opts.Stderr
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	var captureFile *os.File
+	if opts.CaptureFile != "" {
+		captureFile, err = os.Create(opts.CaptureFile)
+		if err != nil {
+			return 1, fmt.Errorf("failed to create capture file: %w", err)
+		}
+		defer captureFile.Close()
+		stdout = io.MultiWriter(stdout, captureFile)
+		stderr = io.MultiWriter(stderr, captureFile)
+	}
+
+	exitCode, execErr := d.ExecWithExitCode(ctx, ExecOptions{
+		ContainerID: lease.ContainerID,
+		Cmd:         cmd,
+		Env:         opts.Env,
+		WorkDir:     opts.WorkDir,
+		User:        key.User,
+		Stdin:       opts.Stdin,
+		Stdout:      stdout,
+		Stderr:      stderr,
+	})
+
+	if execErr != nil {
+		lease.MarkUnhealthy()
+		return exitCode, execErr
+	}
+
+	return exitCode, nil
 }
 
 // ListExecutables returns all executable files in the container's PATH.
