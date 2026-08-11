@@ -833,6 +833,12 @@ func (d *DockerRuntime) runViaPool(ctx context.Context, opts RunOptions) (int, e
 	if err != nil {
 		return 0, err
 	}
+	// LIFO: Release runs first, then the opportunistic sweep — expired
+	// containers reap themselves as a side effect of normal use. Best-effort;
+	// failures surface on the next sweep or explicit `pool gc`.
+	defer func() {
+		_, _, _ = d.pool.MaybeGC(context.Background())
+	}()
 	defer d.pool.Release(context.Background(), lease)
 
 	cmd := append([]string{opts.Binary}, opts.Args...)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,10 +10,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/docker/go-units"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/sandbox"
 )
 
 const (
@@ -84,7 +87,11 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		addDoctorCheck(doctorCheckWritableDir(cfg.ShimDir, "shim directory"))
 
 		if runtimeCheck.Status == doctorStatusPass && cfg.ContainerRuntime == "docker" {
-			addDoctorCheck(doctorCheckDockerReachable())
+			dockerCheck := doctorCheckDockerReachable()
+			addDoctorCheck(dockerCheck)
+			if dockerCheck.Status == doctorStatusPass {
+				addDoctorCheck(doctorCheckWarmPool(cfg))
+			}
 		}
 
 		addDoctorCheck(doctorCheckResourceDefaults(cfg))
@@ -409,6 +416,50 @@ func doctorCheckResourceDefaults(cfg *config.Config) doctorCheck {
 		Critical: false,
 		Message:  message,
 	}
+}
+
+func doctorCheckWarmPool(cfg *config.Config) doctorCheck {
+	check := doctorCheck{Name: "Warm pool", Critical: false}
+
+	docker := sandbox.New(cfg)
+	defer docker.Close()
+
+	entries, err := docker.PoolStatus(context.Background())
+	if err != nil {
+		check.Status = doctorStatusFail
+		check.Message = fmt.Sprintf("could not inspect warm pool: %v", err)
+		return check
+	}
+
+	if len(entries) == 0 {
+		check.Status = doctorStatusPass
+		check.Message = "no warm pool containers"
+		return check
+	}
+
+	leased := 0
+	stale := 0
+	var oldestIdle time.Duration
+	for _, e := range entries {
+		if e.Locked {
+			leased++
+		}
+		if e.State == "exited" || e.State == "dead" {
+			stale++
+		}
+		if e.IdleFor > oldestIdle {
+			oldestIdle = e.IdleFor
+		}
+	}
+
+	check.Status = doctorStatusPass
+	message := fmt.Sprintf("%d containers (%d leased, oldest idle %s)", len(entries), leased, oldestIdle.Truncate(time.Second))
+	if stale > 0 {
+		check.Status = doctorStatusFail
+		message += fmt.Sprintf("; %d dead/exited — run 'tuprwre pool gc'", stale)
+	}
+	check.Message = message
+	return check
 }
 
 func isPathEntry(target string, pathEnv string) bool {
