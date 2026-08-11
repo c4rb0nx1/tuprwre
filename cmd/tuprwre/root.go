@@ -43,6 +43,7 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(doctorCmd)
+	rootCmd.AddCommand(poolCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(shellCmd)
 	rootCmd.AddCommand(initCmd)

@@ -220,6 +220,34 @@ Examples:
 - `tuprwre remove --all`
 - `tuprwre remove --all --images`
 
+### pool
+
+Manage warm sandbox containers kept alive between runs.
+
+Usage:
+
+```text
+tuprwre pool status [flags]
+tuprwre pool gc [flags]
+```
+
+Flags:
+- `pool status --json`: bool, default `false` — output entries as JSON.
+- `pool gc --all`: bool, default `false` — remove all unleased pool containers, not just dead or idle-expired ones.
+- `-h, --help`: bool, default `false` — help for pool.
+
+Notes/gotchas:
+- Pool containers are identifiable in raw Docker by the `tuprwre.pool=true` label; `pool status` is the supported view (image, state, lease, idle time, workspace).
+- `pool gc` without `--all` removes only dead/exited containers and those idle past `warm_pool_ttl`; a freshly used container survives it.
+- Containers currently leased by a running `tuprwre run` are never removed.
+- Both subcommands work even when `warm_pool` is disabled in config, so leftovers stay manageable after toggling the feature off.
+
+Examples:
+- `tuprwre pool status`
+- `tuprwre pool status --json`
+- `tuprwre pool gc`
+- `tuprwre pool gc --all`
+
 ### run
 
 Execute a command inside a sandboxed container (typically invoked by shims).

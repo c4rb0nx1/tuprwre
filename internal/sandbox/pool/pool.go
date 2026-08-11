@@ -356,6 +356,29 @@ func (p *WarmPool) GC(ctx context.Context) (int, error) {
 	return removed, nil
 }
 
+// Drain removes every pool container that is not currently leased,
+// regardless of TTL. Used by `tuprwre pool gc --all`.
+func (p *WarmPool) Drain(ctx context.Context) (int, error) {
+	all, err := p.allPoolContainers(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	removed := 0
+	for _, c := range all {
+		lockFile, err := tryLock(p.cfg.PoolDir, c.ID)
+		if err != nil {
+			continue
+		}
+		if err := p.removeContainerAndArtifacts(ctx, c.ID); err == nil {
+			removed++
+		}
+		_ = lockFile.Close()
+	}
+
+	return removed, nil
+}
+
 // Status returns warm pool container status entries.
 func (p *WarmPool) Status(ctx context.Context) ([]ContainerStatus, error) {
 	all, err := p.allPoolContainers(ctx)
