@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/dockerctx"
 	"github.com/c4rb0nx1/tuprwre/internal/sandbox/pool"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -132,7 +133,7 @@ func (d *DockerRuntime) initClient() error {
 		return nil
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.NewClientWithOpts(dockerctx.ClientOpts()...)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}

@@ -13,6 +13,8 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+
+	"github.com/c4rb0nx1/tuprwre/internal/dockerctx"
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 func requireDockerClient(t *testing.T) *client.Client {
 	t.Helper()
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.NewClientWithOpts(dockerctx.ClientOpts()...)
 	if err != nil {
 		t.Skipf("docker client unavailable: %v", err)
 	}

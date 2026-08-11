@@ -15,7 +15,19 @@ import (
 
 	"github.com/docker/docker/client"
 	"github.com/c4rb0nx1/tuprwre/internal/config"
+	"github.com/c4rb0nx1/tuprwre/internal/dockerctx"
 )
+
+// skipOrFailNoDocker skips docker-dependent tests when the daemon is absent,
+// unless TUPRWRE_TEST_REQUIRE_DOCKER is set — CI gates set it so an
+// unreachable daemon fails loudly instead of silently passing as SKIP.
+func skipOrFailNoDocker(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("TUPRWRE_TEST_REQUIRE_DOCKER") != "" {
+		t.Fatalf(format, args...)
+	}
+	t.Skipf(format, args...)
+}
 
 func requireDockerRuntime(t *testing.T) *DockerRuntime {
 	t.Helper()
@@ -23,14 +35,14 @@ func requireDockerRuntime(t *testing.T) *DockerRuntime {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.NewClientWithOpts(dockerctx.ClientOpts()...)
 	if err != nil {
-		t.Skipf("docker client unavailable: %v", err)
+		skipOrFailNoDocker(t, "docker client unavailable: %v", err)
 	}
 	defer cli.Close()
 
 	if _, err := cli.Ping(ctx); err != nil {
-		t.Skipf("docker daemon unavailable: %v", err)
+		skipOrFailNoDocker(t, "docker daemon unavailable: %v", err)
 	}
 
 	cfg, err := config.Load()
