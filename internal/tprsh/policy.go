@@ -25,10 +25,31 @@ func deny(format string, a ...any) *DenyError {
 // any token starting with '-' that is not in Flags is refused, which is what
 // structurally blocks escape flags like find -exec or git -c without needing
 // to enumerate them. ConfineArgs requires every positional path argument to
-// resolve inside the workspace.
+// resolve inside the workspace. Validate, when set, replaces the generic
+// flag/confine check with a tool-specific policy (used for subcommand CLIs
+// like kubectl and aws whose danger lives in the verb, not the flags).
 type ArgPolicy struct {
 	Flags       map[string]bool
 	ConfineArgs bool
+	Validate    func(cmd string, rest []string, workspace string) error
+}
+
+// CheckPolicy is the pure policy decision for one command: allowlist
+// membership, no path separator in the command name, then either the
+// tool-specific validator or the generic flag/confine check. It performs no
+// execution, so it is testable without the binary being installed.
+func CheckPolicy(cmd string, rest []string, workspace string) error {
+	if strings.ContainsRune(cmd, '/') {
+		return deny("command names with '/' are not permitted: %s", cmd)
+	}
+	policy, ok := allowlist[cmd]
+	if !ok {
+		return deny("command not in allowlist")
+	}
+	if policy.Validate != nil {
+		return policy.Validate(cmd, rest, workspace)
+	}
+	return checkArgs(cmd, rest, policy, workspace)
 }
 
 // trustedBinDirs are the only directories an allowlisted binary may resolve
@@ -50,6 +71,10 @@ var allowlist = map[string]ArgPolicy{
 	// are absent from Flags, so deny-by-default refuses them while ordinary
 	// searches pass. This is the rssh/scponly lesson: gate arguments, not names.
 	"find": {Flags: set("-name", "-iname", "-type", "-maxdepth", "-mindepth", "-path", "-print")},
+	// Subcommand CLIs: the danger is the verb (kubectl exec, aws s3 cp), not a
+	// flag, so they use tool-specific validators enforcing read-only verbs.
+	"kubectl": {Validate: kubectlValidate},
+	"aws":     {Validate: awsValidate},
 }
 
 // dangerousBuiltins are interpreter builtins refused at the call handler. exec

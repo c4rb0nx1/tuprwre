@@ -105,11 +105,7 @@ func (s *Shell) execMiddleware(next interp.ExecHandlerFunc) interp.ExecHandlerFu
 		hc := interp.HandlerCtx(ctx)
 		cmd := args[0]
 
-		policy, ok := allowlist[cmd]
-		if !ok {
-			return s.denyExec(cmd, args, hc.Dir, "command not in allowlist")
-		}
-		if err := checkArgs(cmd, args[1:], policy, s.workspace); err != nil {
+		if err := CheckPolicy(cmd, args[1:], s.workspace); err != nil {
 			return s.denyExec(cmd, args, hc.Dir, err.(*DenyError).Reason)
 		}
 		if _, err := s.resolveBinary(cmd); err != nil {
