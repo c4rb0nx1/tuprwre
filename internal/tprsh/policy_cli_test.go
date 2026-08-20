@@ -89,7 +89,7 @@ func TestAwsReadOnlyPolicy(t *testing.T) {
 		{"iam", "attach-user-policy", "--user-name", "x"},
 		{"ec2", "describe-instances", "--endpoint-url", "https://evil"}, // endpoint redirect
 		{"dynamodb", "delete-table", "--table-name", "t"},
-		{}, // no service/op
+		{},      // no service/op
 		{"ec2"}, // service but no op
 	}
 	for _, a := range allow {

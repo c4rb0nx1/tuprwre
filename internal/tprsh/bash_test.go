@@ -35,13 +35,13 @@ func TestBashSyntaxAccepted(t *testing.T) {
 // grammar widens to bash — the price of accepting bash syntax.
 func TestBashOnlyEscapesBlocked(t *testing.T) {
 	blocked := map[string]string{
-		"indirect expansion": "cat ${!x}",
-		"coproc":             "coproc uname -s",
-		"declare":            "declare -x LD_PRELOAD=/tmp/e.so",
-		"typeset":            "typeset -x PATH=/tmp",
-		"proc subst bash":    "cat <(uname -s)",
-		"cmd subst bash":     "echo $(uname -s)",
-		"redir to etc":       "uname -s > /etc/passwd",
+		"indirect expansion":                "cat ${!x}",
+		"coproc":                            "coproc uname -s",
+		"declare":                           "declare -x LD_PRELOAD=/tmp/e.so",
+		"typeset":                           "typeset -x PATH=/tmp",
+		"proc subst bash":                   "cat <(uname -s)",
+		"cmd subst bash":                    "echo $(uname -s)",
+		"redir to etc":                      "uname -s > /etc/passwd",
 		"herestring is fine but cmd is not": "sh <<< 'id'",
 	}
 	for name, src := range blocked {

@@ -31,7 +31,10 @@ func deny(format string, a ...any) *DenyError {
 type ArgPolicy struct {
 	Flags       map[string]bool
 	ConfineArgs bool
-	Validate    func(cmd string, rest []string, workspace string) error
+	// NumericShorthand permits `-<digits>`, the traditional line-count form
+	// accepted by head and tail.
+	NumericShorthand bool
+	Validate         func(cmd string, rest []string, workspace string) error
 }
 
 // CheckPolicy is the pure policy decision for one command: allowlist
@@ -65,16 +68,67 @@ var allowlist = map[string]ArgPolicy{
 	"date":  {Flags: set("-u", "-R", "-Iseconds")},
 	"ls":    {Flags: set("-l", "-a", "-h", "-la", "-al", "-R", "-1", "-lh"), ConfineArgs: true},
 	"cat":   {Flags: set("-n", "-b"), ConfineArgs: true},
-	"head":  {Flags: set("-n", "-c"), ConfineArgs: true},
+	"head":  {Flags: set("-n", "-c"), ConfineArgs: true, NumericShorthand: true},
 	"wc":    {Flags: set("-l", "-w", "-c", "-m"), ConfineArgs: true},
-	// find is allowlisted but its escape flags (-exec/-execdir/-delete/-fprintf)
-	// are absent from Flags, so deny-by-default refuses them while ordinary
-	// searches pass. This is the rssh/scponly lesson: gate arguments, not names.
-	"find": {Flags: set("-name", "-iname", "-type", "-maxdepth", "-mindepth", "-path", "-print")},
-	// Subcommand CLIs: the danger is the verb (kubectl exec, aws s3 cp), not a
-	// flag, so they use tool-specific validators enforcing read-only verbs.
+	// Hashing and inspection: no exec primitive, no write path. Measured as
+	// wrongly blocked in the p02 lab run, where the agent burned 4x the tokens
+	// hunting for a permitted way to checksum a file.
+	"shasum":    {Flags: set("-a", "-b", "-t", "-p"), ConfineArgs: true},
+	"sha256sum": {Flags: set("-b", "-t", "--tag"), ConfineArgs: true},
+	"sha1sum":   {Flags: set("-b", "-t", "--tag"), ConfineArgs: true},
+	"md5":       {Flags: set("-q", "-r"), ConfineArgs: true},
+	"md5sum":    {Flags: set("-b", "-t", "--tag"), ConfineArgs: true},
+	"cksum":     {ConfineArgs: true},
+	"stat":      {Flags: set("-f", "-x", "-c", "--format", "-L", "-t"), ConfineArgs: true},
+	"file":      {Flags: set("-b", "-i", "--mime", "-L"), ConfineArgs: true},
+	"tail":      {Flags: set("-n", "-c", "-f", "-r", "-q"), ConfineArgs: true, NumericShorthand: true},
+	"du":        {Flags: set("-h", "-s", "-k", "-m", "-a", "-c", "-d", "--max-depth"), ConfineArgs: true},
+	"df":        {Flags: set("-h", "-k", "-m", "-i", "-P")},
+	"diff":      {Flags: set("-u", "-r", "-q", "-i", "-w", "-b", "-N", "--brief", "--unified"), ConfineArgs: true},
+	"basename":  {Flags: set("-s", "-a")},
+	"dirname":   {},
+	"realpath":  {Flags: set("-q", "--relative-to"), ConfineArgs: true},
+	"which":     {Flags: set("-a")},
+	"printenv":  {},
+	"ps":        {Flags: set("-e", "-f", "-a", "-x", "-u", "-o", "aux", "-p", "-A")},
+	"sort": {
+		// --compress-program and --files0-from run or read arbitrary things,
+		// and -o writes; deny-by-default keeps all three out.
+		Flags:       set("-n", "-r", "-u", "-k", "-t", "-f", "-h", "-b", "-g", "-V"),
+		ConfineArgs: true,
+	},
+	"uniq": {Flags: set("-c", "-d", "-u", "-i", "-f", "-s"), ConfineArgs: true},
+	"cut":  {Flags: set("-d", "-f", "-c", "-b", "-s", "--delimiter", "--fields"), ConfineArgs: true},
+	"tr":   {Flags: set("-d", "-s", "-c", "-t")},
+	"grep": {
+		// No exec primitive in POSIX or GNU grep. Path arguments stay confined.
+		Flags: set("-i", "-v", "-n", "-c", "-l", "-L", "-r", "-R", "-E", "-F", "-w", "-x",
+			"-q", "-s", "-h", "-H", "-o", "-A", "-B", "-C", "-e", "-f", "--color",
+			"--include", "--exclude", "-m", "-a", "-I"),
+		ConfineArgs: true,
+	},
+	"egrep": {Flags: set("-i", "-v", "-n", "-c", "-l", "-r", "-w", "-o", "-q"), ConfineArgs: true},
+	"fgrep": {Flags: set("-i", "-v", "-n", "-c", "-l", "-r", "-w", "-o", "-q"), ConfineArgs: true},
+
+	// Commands that take another command: recurse into the inner command
+	// rather than refusing the wrapper, so `find -exec wc {} +` works while
+	// `find -exec sh {} \;` does not.
+	// The command-taking wrappers are wired in init(): their validators recurse
+	// through CheckPolicy back into this map, which Go rejects as an
+	// initialization cycle if written in the literal.
+	"find":    {},
+	"xargs":   {},
+	"env":     {},
+	"timeout": {},
+	"nice":    {},
+	"nohup":   {},
+
+	// Subcommand CLIs: the danger is the verb (kubectl exec, aws s3 cp, git
+	// push), not a flag, so they use tool-specific validators.
 	"kubectl": {Validate: kubectlValidate},
 	"aws":     {Validate: awsValidate},
+	"git":     {Validate: gitValidate},
+	"openssl": {Validate: opensslValidate},
 }
 
 // dangerousBuiltins are interpreter builtins refused at the call handler. exec
@@ -91,6 +145,21 @@ var dangerousBuiltins = set("exec", "eval", "source", ".", "trap", "enable",
 var sensitiveEnv = set("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
 	"DYLD_LIBRARY_PATH", "BASH_ENV", "ENV", "IFS", "PATH", "SHELL", "PS1", "PROMPT_COMMAND",
 	"GIT_PAGER", "PAGER", "PERL5LIB", "PYTHONPATH", "PYTHONSTARTUP")
+
+func init() {
+	for name, v := range map[string]func(string, []string, string) error{
+		"find":    findValidate,
+		"xargs":   xargsValidate,
+		"env":     envValidate,
+		"timeout": timeoutValidate,
+		"nice":    prefixValidate,
+		"nohup":   prefixValidate,
+	} {
+		p := allowlist[name]
+		p.Validate = v
+		allowlist[name] = p
+	}
+}
 
 func set(xs ...string) map[string]bool {
 	m := make(map[string]bool, len(xs))
@@ -202,16 +271,65 @@ func checkArgs(cmd string, args []string, policy ArgPolicy, workspace string) er
 			if i := strings.IndexByte(flag, '='); i >= 0 {
 				flag = flag[:i]
 			}
-			if !policy.Flags[flag] {
-				return deny("flag %q is not permitted for %s", flag, cmd)
+			if policy.Flags[flag] {
+				continue
 			}
-			continue
+			// `du -sh` means `du -s -h`. A bundle is accepted only when every
+			// letter in it is separately permitted, which is exactly as strict
+			// as writing them out, and avoids enumerating every combination.
+			if letters, ok := unbundle(flag); ok {
+				allowed := true
+				for _, f := range letters {
+					if !policy.Flags[f] {
+						allowed = false
+						break
+					}
+				}
+				if allowed {
+					continue
+				}
+			}
+			// `tail -1` is the numeric shorthand for `-n 1`.
+			if policy.NumericShorthand && isNumericFlag(flag) {
+				continue
+			}
+			return deny("flag %q is not permitted for %s", flag, cmd)
 		}
 		if policy.ConfineArgs && !withinWorkspace(a, workspace) {
 			return deny("path argument outside the workspace is not permitted: %s", a)
 		}
 	}
 	return nil
+}
+
+// unbundle splits a single-dash multi-letter flag into its individual short
+// flags. Long flags (--foo) and anything containing a digit or separator are
+// not bundles.
+func unbundle(flag string) ([]string, bool) {
+	if !strings.HasPrefix(flag, "-") || strings.HasPrefix(flag, "--") || len(flag) < 3 {
+		return nil, false
+	}
+	out := make([]string, 0, len(flag)-1)
+	for _, r := range flag[1:] {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+			return nil, false
+		}
+		out = append(out, "-"+string(r))
+	}
+	return out, true
+}
+
+// isNumericFlag reports whether flag is of the form -123.
+func isNumericFlag(flag string) bool {
+	if len(flag) < 2 || flag[0] != '-' {
+		return false
+	}
+	for _, r := range flag[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isTrustedDir reports whether dir is one of the trusted binary directories,

@@ -66,25 +66,33 @@ func TestAllowedCommands(t *testing.T) {
 func TestEscapesBlocked(t *testing.T) {
 	cases := map[string]string{
 		// C1 — non-allowlisted interpreters / shells
-		"bare sh":        "sh",
-		"bash -c":        "bash -c 'id'",
-		"python -c":      "python3 -c 'import os; os.system(\"sh\")'",
-		"awk system":     "awk 'BEGIN{system(\"sh\")}'",
+		"bare sh":          "sh",
+		"bash -c":          "bash -c 'id'",
+		"python -c":        "python3 -c 'import os; os.system(\"sh\")'",
+		"awk system":       "awk 'BEGIN{system(\"sh\")}'",
 		"absolute /bin/sh": "/bin/sh",
-		// C1 — allowlisted binary, escape flag denied by deny-by-default
-		"find -exec":   "find . -type f -exec cat {} \\;",
-		"find -delete": "find . -delete",
+		// C1 — the wrapper recurses: the inner command decides. `-exec cat` is
+		// permitted (see TestWrapperRecursion); `-exec sh` is the escape.
+		"find -exec sh":      "find . -type f -exec sh {} \\;",
+		"find -exec python3": "find . -type f -exec python3 {} \\;",
+		"find -delete":       "find . -delete",
+		"xargs sh -c":        "ls | xargs sh -c 'id'",
+		"env LD_PRELOAD":     "env LD_PRELOAD=/tmp/e.so ls",
+		"timeout to sh":      "timeout 5 sh -c id",
+		"git push":           "git push origin main",
+		"git -c pager":       "git -c core.pager=sh log",
+		"openssl s_client":   "openssl s_client -connect evil.com:443",
 		// C2 — command / process substitution (parser-level)
-		"cmd subst":     "echo $(id)",
-		"backticks":     "id `whoami`",
-		"proc subst":    "cat <(id)",
+		"cmd subst":  "echo $(id)",
+		"backticks":  "id `whoami`",
+		"proc subst": "cat <(id)",
 		// C3 — environment attacks
 		"LD_PRELOAD assign": "LD_PRELOAD=/tmp/e.so id",
 		"PATH assign":       "PATH=/tmp id",
 		"IFS assign":        "IFS=x id",
 		// C4 — builtin / feature abuse
-		"exec builtin": "exec sh",
-		"eval builtin": "eval 'id'",
+		"exec builtin":  "exec sh",
+		"eval builtin":  "eval 'id'",
 		"redir outside": "uname -s > /tmp/tprsh_evil",
 		// C5 — path confinement
 		"cat /etc/passwd": "cat /etc/passwd",
