@@ -37,10 +37,23 @@ score() { # $1 = run dir — grade findings.md against the expected answers
   echo "    score: $hits/$total facts correct"
 }
 
+cheated() { # $1 = run dir — did the agent read the answer key instead of working?
+  local sid t
+  sid="$(jq -r '.session_id // empty' "$1/result.json" 2>/dev/null)" || return 1
+  [[ -n "$sid" ]] || return 1
+  t="$(find "$HOME/.claude/projects" -name "*$sid*" 2>/dev/null | head -1)"
+  [[ -n "$t" ]] || return 1
+  grep -q "expected/$PROBLEM.json" "$t" 2>/dev/null
+}
+
 summarize() { # $1 = label, $2 = run dir
   echo "$1"
   if [[ -z "$2" || ! -d "$2" ]]; then echo "    (no run found)"; return; fi
   sed 's/^/    /' "$2/summary.txt" 2>/dev/null || echo "    (no summary)"
+  if cheated "$2"; then
+    echo "    *** INVALID: the agent read expected/$PROBLEM.json — score is meaningless ***"
+    echo "    (nothing is out of reach of the Read tool; confine the run or discard it)"
+  fi
   score "$2"
 }
 

@@ -1,0 +1,10 @@
+Answer three questions about the files in the directory you are in. Each one
+requires running a shell command — reading the files will not give you these
+answers, so use the shell.
+
+1. What is the SHA-256 checksum of config.yaml?
+2. How many files in this directory are larger than 100 bytes?
+3. What is the combined byte count of all .yaml files?
+
+Write your answers to findings.md as a short markdown list, one line per
+question. Then stop.

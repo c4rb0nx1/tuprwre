@@ -55,6 +55,9 @@ ARGS=(
   --max-budget-usd "$BUDGET"
   --permission-mode bypassPermissions
   --include-hook-events
+  # Keep MCP servers out of runs: one of them created directories inside a
+  # fixture copy, contaminating the workspace under test.
+  --strict-mcp-config
 )
 
 if [[ "$SCENARIO" == "gated" ]]; then

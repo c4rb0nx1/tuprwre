@@ -1,0 +1,23 @@
+{
+  "problem": "p02-shellwork",
+  "facts": [
+    {
+      "id": "sha256_config",
+      "answer": "6aabe846b14b540ce6323da432e85ccdf3d544a258fafe617cd0833850ac07be",
+      "match": "6aabe846b14b540c",
+      "note": "requires shasum/sha256sum; no file-reading tool produces this"
+    },
+    {
+      "id": "files_over_100b",
+      "answer": "3",
+      "match": "\\b3\\b",
+      "note": "app.log 399, deploy.yaml 235, README.md 152; config.yaml is 89"
+    },
+    {
+      "id": "yaml_total_bytes",
+      "answer": "324",
+      "match": "\\b324\\b",
+      "note": "config.yaml 89 + deploy.yaml 235"
+    }
+  ]
+}
