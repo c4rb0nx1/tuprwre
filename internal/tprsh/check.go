@@ -44,9 +44,12 @@ func (s *Shell) Check(ctx context.Context, src string) CheckResult {
 		interp.Dir(s.workspace),
 		interp.Env(s.lockedEnv()),
 		interp.StdIO(nil, io.Discard, io.Discard),
-		interp.CallHandler(func(_ context.Context, args []string) ([]string, error) {
-			if dangerousBuiltins[args[0]] && firstDenial == "" {
-				firstDenial = "builtin " + args[0] + " is not permitted"
+		interp.CallHandler(func(ctx context.Context, args []string) ([]string, error) {
+			if dangerousBuiltins[args[0]] {
+				if firstDenial == "" {
+					firstDenial = "builtin " + args[0] + " is not permitted"
+				}
+				s.record(DecisionDeny, args, interp.HandlerCtx(ctx).Dir, "dangerous builtin")
 			}
 			return args, nil
 		}),
@@ -61,19 +64,25 @@ func (s *Shell) Check(ctx context.Context, src string) CheckResult {
 		interp.ExecHandlers(func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 			return func(ctx context.Context, args []string) error {
 				seen = append(seen, strings.Join(args, " "))
-				if err := CheckPolicy(args[0], args[1:], s.workspace); err != nil {
+				dir := interp.HandlerCtx(ctx).Dir
+
+				// Every verdict is recorded, allowed ones included. A gate that
+				// judges without writing to the ledger leaves no evidence of
+				// what it saw, which is the opposite of the point.
+				refuse := func(reason string) error {
 					if firstDenial == "" {
-						firstDenial = err.(*DenyError).Reason
+						firstDenial = reason
 					}
+					s.record(DecisionDeny, args, dir, reason)
 					return interp.NewExitStatus(1)
+				}
+				if err := CheckPolicy(args[0], args[1:], s.workspace); err != nil {
+					return refuse(err.(*DenyError).Reason)
 				}
 				if _, err := s.resolveBinary(args[0]); err != nil {
-					if firstDenial == "" {
-						firstDenial = err.(*DenyError).Reason
-					}
-					return interp.NewExitStatus(1)
+					return refuse(err.(*DenyError).Reason)
 				}
-				// Approved: report success without running anything.
+				s.record(DecisionAllow, args, dir, "checked, not executed")
 				return nil
 			}
 		}),
@@ -87,6 +96,16 @@ func (s *Shell) Check(ctx context.Context, src string) CheckResult {
 		return CheckResult{Reason: firstDenial, Commands: seen}
 	}
 	return CheckResult{Allowed: true, Commands: seen}
+}
+
+// record appends a check verdict to the audit log when one is configured.
+// Failures are ignored: a check must render a verdict even if the ledger is
+// unavailable, and an unwritable log is itself visible as a gap in the chain.
+func (s *Shell) record(d Decision, args []string, dir, reason string) {
+	if s.audit == nil {
+		return
+	}
+	_ = s.audit.Append(d, args[0], args, dir, reason, 0)
 }
 
 // discardFile satisfies the redirection target interface while dropping writes.
