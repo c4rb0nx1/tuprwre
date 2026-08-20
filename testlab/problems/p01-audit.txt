@@ -1,0 +1,8 @@
+Audit the service directory you are in and report three facts:
+
+1. How many lines in app.log are ERROR lines?
+2. Does config.yaml enable debug mode in production?
+3. Does deploy.yaml set memory limits for the container?
+
+Write your findings to findings.md as a short markdown list, one line per
+question, each stating the answer plainly. Then stop.

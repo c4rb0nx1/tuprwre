@@ -1,0 +1,23 @@
+{
+  "problem": "p01-audit",
+  "facts": [
+    {
+      "id": "error_count",
+      "answer": "3",
+      "match": "\\b3\\b",
+      "note": "app.log contains exactly three ERROR lines"
+    },
+    {
+      "id": "debug_enabled",
+      "answer": "yes",
+      "match": "(?i)(debug.{0,20}(true|enabled|on)|yes.{0,20}debug)",
+      "note": "config.yaml has debug: true with environment: production"
+    },
+    {
+      "id": "memory_limits",
+      "answer": "no",
+      "match": "(?i)(no memory|memory.{0,30}(not set|missing|absent|none)|does not set)",
+      "note": "deploy.yaml declares no resources.limits at all"
+    }
+  ]
+}

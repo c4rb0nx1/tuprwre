@@ -1,0 +1,5 @@
+service: payments-api
+environment: production
+debug: true
+log_level: verbose
+replicas: 3
