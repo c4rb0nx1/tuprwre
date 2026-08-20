@@ -12,6 +12,20 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// Mode selects whether policy decisions are enforced or merely recorded.
+type Mode string
+
+const (
+	// ModeEnforce denies commands that fail policy. The default.
+	ModeEnforce Mode = "enforce"
+	// ModeObserve runs every command but records the verdict policy would
+	// have reached. Nothing is blocked: this is for building an evidence base
+	// before committing to an allowlist, the same way SELinux permissive mode
+	// precedes enforcing. It is NOT a security boundary and must be labelled
+	// as such wherever it is surfaced.
+	ModeObserve Mode = "observe"
+)
+
 // Shell is a hardened interception shell. It parses commands with mvdan.cc/sh
 // and executes them in-process, vetting every command against the allowlist
 // before exec, resetting the child environment, and auditing every attempt.
@@ -19,6 +33,7 @@ type Shell struct {
 	workspace string
 	audit     *Auditor
 	confiner  Confiner
+	mode      Mode
 	stdin     io.Reader
 	stdout    io.Writer
 	stderr    io.Writer
@@ -43,11 +58,23 @@ func NewConfined(workspace string, auditor *Auditor, confiner Confiner) (*Shell,
 		workspace: abs,
 		audit:     auditor,
 		confiner:  confiner,
+		mode:      ModeEnforce,
 		stdin:     os.Stdin,
 		stdout:    os.Stdout,
 		stderr:    os.Stderr,
 	}, nil
 }
+
+// SetMode switches between enforcing and observe-only policy.
+func (s *Shell) SetMode(m Mode) {
+	if m == "" {
+		m = ModeEnforce
+	}
+	s.mode = m
+}
+
+// Observing reports whether policy decisions are recorded but not enforced.
+func (s *Shell) Observing() bool { return s.mode == ModeObserve }
 
 // SetIO overrides the standard streams (used by tests).
 func (s *Shell) SetIO(in io.Reader, out, err io.Writer) {
@@ -82,8 +109,12 @@ func (s *Shell) Run(ctx context.Context, src string) error {
 
 	if err := staticReject(file, s.workspace); err != nil {
 		de := err.(*DenyError)
-		_ = s.audit.Append(DecisionDeny, "<script>", []string{src}, s.workspace, de.Reason, 0)
-		return err
+		if s.mode == ModeObserve {
+			_ = s.audit.Append(DecisionShadow, "<script>", []string{src}, s.workspace, de.Reason, 0)
+		} else {
+			_ = s.audit.Append(DecisionDeny, "<script>", []string{src}, s.workspace, de.Reason, 0)
+			return err
+		}
 	}
 
 	runner, err := interp.New(
@@ -106,6 +137,10 @@ func (s *Shell) callHandler(ctx context.Context, args []string) ([]string, error
 	hc := interp.HandlerCtx(ctx)
 	name := args[0]
 	if dangerousBuiltins[name] {
+		if s.mode == ModeObserve {
+			_ = s.audit.Append(DecisionShadow, name, args, hc.Dir, "dangerous builtin", 0)
+			return args, nil
+		}
 		_ = s.audit.Append(DecisionDeny, name, args, hc.Dir, "dangerous builtin", 0)
 		return nil, deny("builtin %q is not permitted", name)
 	}
@@ -121,11 +156,19 @@ func (s *Shell) execMiddleware(next interp.ExecHandlerFunc) interp.ExecHandlerFu
 		cmd := args[0]
 
 		if err := CheckPolicy(cmd, args[1:], s.workspace); err != nil {
-			return s.denyExec(cmd, args, hc.Dir, err.(*DenyError).Reason)
+			if blocked, res := s.refuse(cmd, args, hc.Dir, err.(*DenyError).Reason); blocked {
+				return res
+			}
+			// Observe mode: policy would have denied this, but the point of
+			// observing is to learn what real agents need, so it runs anyway.
+			return next(ctx, args)
 		}
 		resolved, err := s.resolveBinary(cmd)
 		if err != nil {
-			return s.denyExec(cmd, args, hc.Dir, err.(*DenyError).Reason)
+			if blocked, res := s.refuse(cmd, args, hc.Dir, err.(*DenyError).Reason); blocked {
+				return res
+			}
+			return next(ctx, args)
 		}
 
 		// Confine the approved command. The audit records the argv the agent
@@ -133,7 +176,10 @@ func (s *Shell) execMiddleware(next interp.ExecHandlerFunc) interp.ExecHandlerFu
 		// appear in the ledger.
 		execArgs, err := s.confiner.Wrap(resolved, args)
 		if err != nil {
-			return s.denyExec(cmd, args, hc.Dir, "sandbox unavailable: "+err.Error())
+			// A sandbox that cannot be applied is refused even while observing:
+			// this is an infrastructure failure, not a policy question.
+			_ = s.audit.Append(DecisionDeny, cmd, args, hc.Dir, "sandbox unavailable: "+err.Error(), 0)
+			return deny("sandbox unavailable: %v", err)
 		}
 
 		_ = s.audit.Append(DecisionAllow, cmd, args, hc.Dir, "", 0)
@@ -147,9 +193,16 @@ func (s *Shell) execMiddleware(next interp.ExecHandlerFunc) interp.ExecHandlerFu
 	}
 }
 
-func (s *Shell) denyExec(cmd string, args []string, cwd, reason string) error {
+// refuse records a failed policy decision. In enforce mode it returns
+// blocked=true with the error to return; in observe mode it records the verdict
+// that would have been reached and lets the caller proceed.
+func (s *Shell) refuse(cmd string, args []string, cwd, reason string) (blocked bool, err error) {
+	if s.mode == ModeObserve {
+		_ = s.audit.Append(DecisionShadow, cmd, args, cwd, reason, 0)
+		return false, nil
+	}
 	_ = s.audit.Append(DecisionDeny, cmd, args, cwd, reason, 0)
-	return deny("%s", reason)
+	return true, deny("%s", reason)
 }
 
 // resolveBinary finds cmd in a trusted bin dir, resolves symlinks, and
@@ -181,6 +234,10 @@ func (s *Shell) openHandler(ctx context.Context, path string, flag int, perm os.
 	}
 	if !withinWorkspace(path, s.workspace) {
 		hc := interp.HandlerCtx(ctx)
+		if s.mode == ModeObserve {
+			_ = s.audit.Append(DecisionShadow, "<open>", []string{path}, hc.Dir, "open outside workspace", 0)
+			return os.OpenFile(path, flag, perm)
+		}
 		_ = s.audit.Append(DecisionDeny, "<open>", []string{path}, hc.Dir, "open outside workspace", 0)
 		return nil, deny("open outside workspace: %s", path)
 	}

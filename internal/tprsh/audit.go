@@ -25,6 +25,10 @@ const (
 	DecisionAllow  Decision = "allow"
 	DecisionDeny   Decision = "deny"
 	DecisionFinish Decision = "finish"
+	// DecisionShadow records a command that ran while policy WOULD have denied
+	// it. Observe mode emits these so an operator can answer "what breaks if I
+	// enforce today?" before anything is enforced.
+	DecisionShadow Decision = "shadow-deny"
 )
 
 // Record is one entry in the audit chain. Hash chains over Prev so any edit,

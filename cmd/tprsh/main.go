@@ -22,6 +22,7 @@ func main() {
 		workspace = flag.String("workspace", ".", "workspace directory (only writable/readable tree)")
 		auditPath = flag.String("audit", "", "audit log path (default: <workspace>/../tprsh-audit.jsonl)")
 		sandbox   = flag.String("sandbox", "none", "confinement for approved commands: none|read-only|workspace-write")
+		mode      = flag.String("mode", "enforce", "enforce | observe (observe records the verdict but blocks nothing)")
 		check     = flag.Bool("check", false, "evaluate policy for -c and exit 0 (allow) or 2 (deny) without running anything")
 	)
 	flag.Parse()
@@ -55,6 +56,11 @@ func main() {
 	sh, err := tprsh.NewConfined(ws, auditor, confiner)
 	if err != nil {
 		fatal(err)
+	}
+	sh.SetMode(tprsh.Mode(*mode))
+	if sh.Observing() {
+		fmt.Fprintln(os.Stderr,
+			"tprsh: OBSERVE MODE — policy is recorded, NOT enforced. This is not a security boundary.")
 	}
 	if *sandbox != "none" {
 		fmt.Fprintf(os.Stderr, "tprsh: confinement=%s (%s)\n", *sandbox, confiner.Name())
