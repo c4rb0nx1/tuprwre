@@ -22,6 +22,7 @@ func main() {
 		workspace = flag.String("workspace", ".", "workspace directory (only writable/readable tree)")
 		auditPath = flag.String("audit", "", "audit log path (default: <workspace>/../tprsh-audit.jsonl)")
 		sandbox   = flag.String("sandbox", "none", "confinement for approved commands: none|read-only|workspace-write")
+		check     = flag.Bool("check", false, "evaluate policy for -c and exit 0 (allow) or 2 (deny) without running anything")
 	)
 	flag.Parse()
 
@@ -60,6 +61,18 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Check mode is the gate an external harness hook calls: it renders a
+	// verdict using the same parser and policy as execution, but runs nothing.
+	if *check {
+		res := sh.Check(ctx, *cmd)
+		if res.Allowed {
+			fmt.Println("ALLOW")
+			os.Exit(0)
+		}
+		fmt.Println(res.Reason)
+		os.Exit(2)
+	}
 
 	if *cmd != "" {
 		os.Exit(run(ctx, sh, *cmd))

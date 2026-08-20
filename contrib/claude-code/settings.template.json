@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "TPRSH_BIN=__TPRSH_BIN__ TPRSH_WORKSPACE=__WORKSPACE__ TPRSH_AUDIT=__AUDIT__ bash __GATE__",
+            "timeout": 15,
+            "statusMessage": "tprsh policy check"
+          }
+        ]
+      }
+    ]
+  }
+}
