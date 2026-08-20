@@ -21,6 +21,7 @@ func main() {
 		cmd       = flag.String("c", "", "command to run (non-interactive)")
 		workspace = flag.String("workspace", ".", "workspace directory (only writable/readable tree)")
 		auditPath = flag.String("audit", "", "audit log path (default: <workspace>/../tprsh-audit.jsonl)")
+		sandbox   = flag.String("sandbox", "none", "confinement for approved commands: none|read-only|workspace-write")
 	)
 	flag.Parse()
 
@@ -38,9 +39,24 @@ func main() {
 	}
 	defer auditor.Close()
 
-	sh, err := tprsh.New(ws, auditor)
+	// The audit log is denied to the confined child even if it sits inside the
+	// workspace, so its integrity is enforced rather than assumed.
+	confiner, err := tprsh.NewConfiner(tprsh.ConfineOptions{
+		Mode:      tprsh.SandboxMode(*sandbox),
+		Workspace: tprsh.CanonicalDir(ws),
+		NoWrite:   []string{tprsh.CanonicalDir(filepath.Dir(*auditPath))},
+		NoRead:    tprsh.DefaultProtectedReadPaths(),
+	})
 	if err != nil {
 		fatal(err)
+	}
+
+	sh, err := tprsh.NewConfined(ws, auditor, confiner)
+	if err != nil {
+		fatal(err)
+	}
+	if *sandbox != "none" {
+		fmt.Fprintf(os.Stderr, "tprsh: confinement=%s (%s)\n", *sandbox, confiner.Name())
 	}
 
 	ctx := context.Background()

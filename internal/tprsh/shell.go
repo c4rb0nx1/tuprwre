@@ -18,20 +18,31 @@ import (
 type Shell struct {
 	workspace string
 	audit     *Auditor
+	confiner  Confiner
 	stdin     io.Reader
 	stdout    io.Writer
 	stderr    io.Writer
 }
 
 // New builds a Shell rooted at workspace, writing audit records via auditor.
+// Approved commands run unconfined; use NewConfined to add an OS sandbox.
 func New(workspace string, auditor *Auditor) (*Shell, error) {
+	return NewConfined(workspace, auditor, nopConfiner{})
+}
+
+// NewConfined builds a Shell that wraps every approved command with confiner.
+func NewConfined(workspace string, auditor *Auditor, confiner Confiner) (*Shell, error) {
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
 		return nil, err
 	}
+	if confiner == nil {
+		confiner = nopConfiner{}
+	}
 	return &Shell{
 		workspace: abs,
 		audit:     auditor,
+		confiner:  confiner,
 		stdin:     os.Stdin,
 		stdout:    os.Stdout,
 		stderr:    os.Stderr,
@@ -59,7 +70,11 @@ func (s *Shell) lockedEnv() expand.Environ {
 // runtime handler returns a *DenyError; a normal non-zero exit returns the
 // interpreter's exit-status error.
 func (s *Shell) Run(ctx context.Context, src string) error {
-	file, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(
+	// Bash rather than POSIX: agents emit bash-isms ([[ ]], arrays, <<<) and
+	// the transparency goal says they should not have to know otherwise. The
+	// wider grammar is compensated for in staticReject, which refuses the
+	// bash-only constructs that enable escapes.
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(
 		strings.NewReader(src), "tprsh")
 	if err != nil {
 		return deny("parse error: %v", err)
@@ -108,12 +123,21 @@ func (s *Shell) execMiddleware(next interp.ExecHandlerFunc) interp.ExecHandlerFu
 		if err := CheckPolicy(cmd, args[1:], s.workspace); err != nil {
 			return s.denyExec(cmd, args, hc.Dir, err.(*DenyError).Reason)
 		}
-		if _, err := s.resolveBinary(cmd); err != nil {
+		resolved, err := s.resolveBinary(cmd)
+		if err != nil {
 			return s.denyExec(cmd, args, hc.Dir, err.(*DenyError).Reason)
 		}
 
+		// Confine the approved command. The audit records the argv the agent
+		// asked for; the sandbox wrapper is an execution detail and must not
+		// appear in the ledger.
+		execArgs, err := s.confiner.Wrap(resolved, args)
+		if err != nil {
+			return s.denyExec(cmd, args, hc.Dir, "sandbox unavailable: "+err.Error())
+		}
+
 		_ = s.audit.Append(DecisionAllow, cmd, args, hc.Dir, "", 0)
-		runErr := next(ctx, args)
+		runErr := next(ctx, execArgs)
 		exit := 0
 		if runErr != nil {
 			exit = 1

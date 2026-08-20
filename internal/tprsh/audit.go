@@ -52,13 +52,48 @@ type Auditor struct {
 	now  func() time.Time
 }
 
-// NewAuditor opens (creating if needed) an append-only log at path.
+// NewAuditor opens (creating if needed) an append-only log at path and
+// continues the existing hash chain. Resuming the chain rather than starting a
+// fresh one per process is what makes deleting a whole session detectable: the
+// next session's first record would no longer link to the last surviving hash.
 func NewAuditor(path string) (*Auditor, error) {
+	seq, head, err := tailChain(path)
+	if err != nil {
+		return nil, err
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open audit log: %w", err)
 	}
-	return &Auditor{f: f, now: time.Now}, nil
+	return &Auditor{f: f, seq: seq, head: head, now: time.Now}, nil
+}
+
+// tailChain returns the sequence number and hash of the last record already in
+// the log, or zero values when the log does not exist yet.
+func tailChain(path string) (int, string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("read audit log: %w", err)
+	}
+
+	var last Record
+	found := false
+	dec := json.NewDecoder(bytes.NewReader(data))
+	for dec.More() {
+		var r Record
+		if err := dec.Decode(&r); err != nil {
+			return 0, "", fmt.Errorf("audit log is corrupt near record %d: %w", last.Seq+1, err)
+		}
+		last, found = r, true
+	}
+	if !found {
+		return 0, "", nil
+	}
+	return last.Seq, last.Hash, nil
 }
 
 // hashRecord computes H(prev || canonical(record without hash)).

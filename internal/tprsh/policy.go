@@ -81,7 +81,10 @@ var allowlist = map[string]ArgPolicy{
 // would replace the process with an unrestricted one; eval/source/. run
 // arbitrary text; trap/enable/command reach around the policy.
 var dangerousBuiltins = set("exec", "eval", "source", ".", "trap", "enable",
-	"command", "builtin", "mapfile", "readarray", "set", "shopt", "export", "unset", "alias")
+	"command", "builtin", "mapfile", "readarray", "set", "shopt", "export", "unset", "alias",
+	// bash declaration builtins can set variables the plain-assignment check
+	// would otherwise inspect, so they are refused outright.
+	"declare", "typeset", "readonly", "local")
 
 // sensitiveEnv are variable names that must never be assigned: they redirect
 // code loading or command resolution (the LD_PRELOAD / BASH_ENV / PATH class).
@@ -115,6 +118,15 @@ func staticReject(node syntax.Node, workspace string) error {
 			rejErr = deny("process substitution <(...) is not permitted")
 		case *syntax.FuncDecl:
 			rejErr = deny("function declarations are not permitted")
+		case *syntax.CoprocClause:
+			// bash-only: spawns a background process outside the exec handler.
+			rejErr = deny("coproc is not permitted")
+		case *syntax.ParamExp:
+			// bash-only: ${!var} resolves a variable name held in another
+			// variable, which hides the real target from static inspection.
+			if x.Excl {
+				rejErr = deny("indirect variable expansion ${!...} is not permitted")
+			}
 		case *syntax.Assign:
 			if x.Name != nil && sensitiveEnv[x.Name.Value] {
 				rejErr = deny("assignment to sensitive variable %q is not permitted", x.Name.Value)
@@ -129,12 +141,22 @@ func staticReject(node syntax.Node, workspace string) error {
 	return rejErr
 }
 
-// checkRedirect permits only literal file redirections that resolve inside the
-// workspace; fd-dups (>&) and non-literal or out-of-tree targets are refused.
+// deviceSinks are the standard character devices a redirection may target
+// outside the workspace. They carry no data off the machine and `2>/dev/null`
+// is ubiquitous, so refusing them only produces false denials.
+var deviceSinks = set("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/zero")
+
+// checkRedirect permits literal file redirections that resolve inside the
+// workspace, plus the device sinks above. Here-documents and here-strings
+// carry inline content rather than a path and touch no file, so they pass.
+// fd-dups (>&) and non-literal targets are refused.
 func checkRedirect(r *syntax.Redirect, workspace string) error {
 	switch r.Op {
 	case syntax.DplOut, syntax.DplIn:
 		return deny("file-descriptor duplication redirection is not permitted")
+	case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
+		// Inline stdin content, not a filesystem path.
+		return nil
 	}
 	if r.Word == nil {
 		return deny("redirection with no target is not permitted")
@@ -142,6 +164,9 @@ func checkRedirect(r *syntax.Redirect, workspace string) error {
 	lit := r.Word.Lit()
 	if lit == "" {
 		return deny("redirection target must be a literal path")
+	}
+	if deviceSinks[lit] {
+		return nil
 	}
 	if !withinWorkspace(lit, workspace) {
 		return deny("redirection outside the workspace is not permitted: %s", lit)
