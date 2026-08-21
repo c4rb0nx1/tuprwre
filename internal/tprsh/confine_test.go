@@ -142,3 +142,60 @@ func TestSandboxNoneIsPassthrough(t *testing.T) {
 		t.Fatalf("none mode altered argv: %v", argv)
 	}
 }
+
+// profileOf extracts the generated Seatbelt profile from a wrapped argv, so
+// profile shape can be asserted without needing the network or a live child.
+func profileOf(t *testing.T, opts ConfineOptions, binary string) string {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skip("seatbelt backend is macOS-only")
+	}
+	c, err := NewConfiner(opts)
+	if err != nil {
+		t.Skipf("confiner unavailable: %v", err)
+	}
+	argv, err := c.Wrap(binary, []string{filepath.Base(binary)})
+	if err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+	if len(argv) < 3 || argv[0] != "sandbox-exec" || argv[1] != "-p" {
+		t.Fatalf("unexpected wrapped argv: %v", argv)
+	}
+	return argv[2]
+}
+
+// TestNoNetworkAppearsInProfile guards the network switch, which is the only
+// egress control Seatbelt can express — it is all-or-nothing, so its presence
+// or absence is the whole contract.
+func TestNoNetworkAppearsInProfile(t *testing.T) {
+	base := ConfineOptions{Mode: SandboxWorkspaceWrite, Workspace: CanonicalDir(t.TempDir())}
+
+	if p := profileOf(t, base, "/usr/bin/true"); strings.Contains(p, "(deny network*)") {
+		t.Error("network must stay open unless NoNetwork is set")
+	}
+	base.NoNetwork = true
+	if p := profileOf(t, base, "/usr/bin/true"); !strings.Contains(p, "(deny network*)") {
+		t.Error("NoNetwork must emit a network denial")
+	}
+}
+
+// TestExecAlsoPermitsReExecChain covers the macOS shim problem: /usr/bin/python3
+// reaches the real interpreter through two more exec hops, and a single-binary
+// allowlist stops it from starting at all.
+func TestExecAlsoPermitsReExecChain(t *testing.T) {
+	opts := ConfineOptions{
+		Mode:      SandboxWorkspaceWrite,
+		Workspace: CanonicalDir(t.TempDir()),
+		ExecAlso:  []string{"/Library/Developer/CommandLineTools/usr/bin/python3"},
+	}
+	p := profileOf(t, opts, "/usr/bin/python3")
+	if !strings.Contains(p, `(literal "/usr/bin/python3")`) {
+		t.Error("the approved binary must be permitted to exec")
+	}
+	if !strings.Contains(p, `(literal "/Library/Developer/CommandLineTools/usr/bin/python3")`) {
+		t.Error("ExecAlso targets must be permitted to exec")
+	}
+	if !strings.Contains(p, "(deny process-exec*)") {
+		t.Error("everything else must still be denied")
+	}
+}

@@ -45,7 +45,31 @@ type ConfineOptions struct {
 	// from "the child does not know the path" into "the kernel refuses".
 	NoWrite []string
 	// NoRead are paths the process must never read: credential stores.
+	//
+	// This is deliberately a blocklist rather than a workspace allowlist.
+	// Confining reads to the workspace is not achievable with Seatbelt: any
+	// broad file-read denial kills the process during dynamic loading with
+	// SIGABRT and no diagnostic, because every runtime reads an
+	// version-dependent set of loader caches and frameworks. Read confinement
+	// belongs to the Linux backend, where a mount namespace simply does not
+	// contain the paths you did not bind, so there is no allowlist to get
+	// wrong. dsh reaches the same conclusion: its whole vocabulary governs
+	// writes.
 	NoRead []string
+
+	// NoNetwork denies all outbound network access. Verified effective, but
+	// it is all-or-nothing: Seatbelt cannot express a host allowlist, so a
+	// workload that legitimately needs the network (an SDK call, a package
+	// index) must run with the network open and is then only as contained as
+	// an egress proxy makes it.
+	NoNetwork bool
+
+	// ExecAlso permits additional exec targets beyond the approved binary.
+	// Required because macOS binaries re-exec through shim chains --
+	// /usr/bin/python3 reaches the framework interpreter through two hops, and
+	// /bin/sh execs its bash variant -- and a single-binary allowlist stops
+	// them from starting at all.
+	ExecAlso []string
 }
 
 // NewConfiner returns a Confiner for this platform, or an error when a
@@ -132,13 +156,25 @@ func (s *seatbelt) profile(binary string) (string, error) {
 		fmt.Fprintf(&b, `(deny file-read* (subpath "%s"))`, p)
 	}
 
-	// Exec: only the approved binary. A blanket (deny process-exec*) would
-	// block sandbox-exec's own launch of the target, so the allow is required.
+	if s.opts.NoNetwork {
+		b.WriteString("(deny network*)")
+	}
+
+	// Exec: only the approved binary and any declared re-exec targets. A
+	// blanket (deny process-exec*) would block sandbox-exec's own launch of
+	// the target, so the allow is required.
 	abs, err := filepath.Abs(binary)
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(&b, `(deny process-exec*)(allow process-exec (literal "%s"))`, abs)
+	b.WriteString(`(deny process-exec*)(allow process-exec (literal "` + abs + `")`)
+	for _, extra := range s.opts.ExecAlso {
+		if extra == "" {
+			continue
+		}
+		fmt.Fprintf(&b, ` (literal "%s")`, extra)
+	}
+	b.WriteString(")")
 
 	return b.String(), nil
 }

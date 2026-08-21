@@ -22,6 +22,7 @@ func main() {
 		workspace = flag.String("workspace", ".", "workspace directory (only writable/readable tree)")
 		auditPath = flag.String("audit", "", "audit log path (default: <workspace>/../tprsh-audit.jsonl)")
 		sandbox   = flag.String("sandbox", "none", "confinement for approved commands: none|read-only|workspace-write")
+		noNet     = flag.Bool("no-network", false, "deny all outbound network access for confined commands")
 		mode      = flag.String("mode", "enforce", "enforce | observe (observe records the verdict but blocks nothing)")
 		check     = flag.Bool("check", false, "evaluate policy for -c and exit 0 (allow) or 2 (deny) without running anything")
 	)
@@ -48,6 +49,7 @@ func main() {
 		Workspace: tprsh.CanonicalDir(ws),
 		NoWrite:   []string{tprsh.CanonicalDir(filepath.Dir(*auditPath))},
 		NoRead:    tprsh.DefaultProtectedReadPaths(),
+		NoNetwork: *noNet,
 	})
 	if err != nil {
 		fatal(err)
