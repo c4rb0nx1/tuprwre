@@ -68,6 +68,10 @@ test-integration: build
 # Benchmark Go SDK exec latency (warm pool hard gate).
 # TUPRWRE_TEST_REQUIRE_DOCKER makes an unreachable daemon FAIL the gate
 # instead of silently passing as SKIP.
+bench-tprsh:
+	@echo "Running tprsh gate benchmarks (policy, check, audit, run)..."
+	$(GOTEST) -bench=. -benchmem -run='^$$' ./internal/tprsh/
+
 bench-exec-sdk:
 	@echo "Running Go SDK exec benchmark (hard gate: p50 < 80ms)..."
 	TUPRWRE_TEST_REQUIRE_DOCKER=1 $(GOTEST) -v -run 'TestExecBenchmark$$' -timeout 5m ./internal/sandbox/...
