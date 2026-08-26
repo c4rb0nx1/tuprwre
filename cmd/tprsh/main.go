@@ -22,9 +22,11 @@ func main() {
 		workspace = flag.String("workspace", ".", "workspace directory (only writable/readable tree)")
 		auditPath = flag.String("audit", "", "audit log path (default: <workspace>/../tprsh-audit.jsonl)")
 		sandbox   = flag.String("sandbox", "none", "confinement for approved commands: none|read-only|workspace-write")
+		backend   = flag.String("confiner", "auto", "confinement backend: auto|seatbelt|srt")
 		noNet     = flag.Bool("no-network", false, "deny all outbound network access for confined commands")
 		mode      = flag.String("mode", "enforce", "enforce | observe (observe records the verdict but blocks nothing)")
 		check     = flag.Bool("check", false, "evaluate policy for -c and exit 0 (allow) or 2 (deny) without running anything")
+		verify    = flag.Bool("verify", false, "verify the audit log's hash chain and exit 0 (intact) or 2 (broken)")
 	)
 	flag.Parse()
 
@@ -34,6 +36,18 @@ func main() {
 	}
 	if *auditPath == "" {
 		*auditPath = filepath.Join(filepath.Dir(ws), "tprsh-audit.jsonl")
+	}
+
+	// Verification opens the log read-only and appends nothing: a verifier
+	// that wrote to the chain it is checking would taint its own evidence.
+	if *verify {
+		records, err := tprsh.LoadAndVerify(*auditPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tprsh: audit verification FAILED: %v\n", err)
+			os.Exit(2)
+		}
+		fmt.Printf("audit chain intact: %d records\n", len(records))
+		os.Exit(0)
 	}
 
 	auditor, err := tprsh.NewAuditor(*auditPath)
@@ -50,6 +64,7 @@ func main() {
 		NoWrite:   []string{tprsh.CanonicalDir(filepath.Dir(*auditPath))},
 		NoRead:    tprsh.DefaultProtectedReadPaths(),
 		NoNetwork: *noNet,
+		Backend:   *backend,
 	})
 	if err != nil {
 		fatal(err)

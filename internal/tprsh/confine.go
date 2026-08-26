@@ -10,8 +10,8 @@ import (
 )
 
 // SandboxMode is the file-effect policy applied to an approved command. The
-// vocabulary matches the one Docker's dsh settled on, so profiles are
-// comparable across implementations.
+// vocabulary matches the one dsh (DeepSeek Harness) settled on, so profiles
+// are comparable across implementations.
 type SandboxMode string
 
 const (
@@ -64,6 +64,13 @@ type ConfineOptions struct {
 	// an egress proxy makes it.
 	NoNetwork bool
 
+	// Backend selects the confinement implementation. "auto" (the default)
+	// prefers the platform backend — on macOS the in-house seatbelt, which
+	// pins process-exec to the approved binary, a guarantee srt does not
+	// offer — and falls back to srt where no platform backend exists.
+	// "seatbelt" and "srt" force one and fail when it is unavailable.
+	Backend string
+
 	// ExecAlso permits additional exec targets beyond the approved binary.
 	// Required because macOS binaries re-exec through shim chains --
 	// /usr/bin/python3 reaches the framework interpreter through two hops, and
@@ -86,15 +93,37 @@ func NewConfiner(opts ConfineOptions) (Confiner, error) {
 		}
 	}
 
-	switch runtime.GOOS {
-	case "darwin":
+	switch opts.Backend {
+	case "", "auto":
+		if runtime.GOOS == "darwin" {
+			if sb := (&seatbelt{opts: opts}); sb.Available() {
+				return sb, nil
+			}
+		}
+		if s, err := newSRT(opts); err == nil && s.Available() {
+			return s, nil
+		}
+		return nil, fmt.Errorf("sandbox mode %q requested but no confinement backend is available on %s (need sandbox-exec, or `npm install -g @anthropic-ai/sandbox-runtime`)", opts.Mode, runtime.GOOS)
+	case "seatbelt":
+		if runtime.GOOS != "darwin" {
+			return nil, fmt.Errorf("backend seatbelt is macOS-only (running on %s)", runtime.GOOS)
+		}
 		sb := &seatbelt{opts: opts}
 		if !sb.Available() {
-			return nil, fmt.Errorf("sandbox mode %q requested but sandbox-exec is unavailable", opts.Mode)
+			return nil, fmt.Errorf("backend seatbelt requested but sandbox-exec is unavailable")
 		}
 		return sb, nil
+	case "srt":
+		s, err := newSRT(opts)
+		if err != nil {
+			return nil, err
+		}
+		if !s.Available() {
+			return nil, fmt.Errorf("backend srt requested but the srt CLI is unavailable (`npm install -g @anthropic-ai/sandbox-runtime`)")
+		}
+		return s, nil
 	default:
-		return nil, fmt.Errorf("sandbox mode %q requested but no backend exists for %s", opts.Mode, runtime.GOOS)
+		return nil, fmt.Errorf("unknown confinement backend %q (want auto, seatbelt, or srt)", opts.Backend)
 	}
 }
 
