@@ -27,7 +27,7 @@ func newTestShell(t *testing.T) (*Shell, string) {
 	}
 	t.Cleanup(func() { _ = auditor.Close() })
 
-	sh, err := New(ws, auditor)
+	sh, err := NewConfined(ws, auditor, nil)
 	if err != nil {
 		t.Fatalf("new shell: %v", err)
 	}

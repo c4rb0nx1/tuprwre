@@ -213,4 +213,3 @@ func TestRunViaExec_ContainerIDShortcut(t *testing.T) {
 		t.Fatalf("unexpected stdout: %q", got)
 	}
 }
-

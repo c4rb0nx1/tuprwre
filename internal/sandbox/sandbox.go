@@ -144,9 +144,9 @@ func (d *DockerRuntime) initClient() error {
 	if _, err := cli.Ping(pingCtx); err != nil {
 		_ = cli.Close()
 		if client.IsErrConnectionFailed(err) {
-			return fmt.Errorf("Docker daemon is not running or unreachable. %s", dockerStartHint(runtime.GOOS))
+			return fmt.Errorf("docker daemon is not running or unreachable. %s", dockerStartHint(runtime.GOOS))
 		}
-		return fmt.Errorf("Docker daemon health check failed: %w", err)
+		return fmt.Errorf("docker daemon health check failed: %w", err)
 	}
 
 	d.client = cli
@@ -551,90 +551,6 @@ func (d *DockerRuntime) GenerateImageName() string {
 	return fmt.Sprintf("tuprwre-%s-%s", timestamp, uuid.New().String()[:8])
 }
 
-// Execute runs a command inside an existing container (for Phase 2+ use).
-func (d *DockerRuntime) Execute(ctx context.Context, containerID string, command string) error {
-	if err := d.initClient(); err != nil {
-		return err
-	}
-
-	execConfig := container.ExecOptions{
-		Cmd:          []string{"sh", "-c", command},
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          false,
-	}
-
-	execResp, err := d.client.ContainerExecCreate(ctx, containerID, execConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	attachOptions := container.ExecAttachOptions{
-		Tty: false,
-	}
-
-	resp, err := d.client.ContainerExecAttach(ctx, execResp.ID, attachOptions)
-	if err != nil {
-		return fmt.Errorf("failed to attach to exec: %w", err)
-	}
-	defer resp.Close()
-
-	// Stream output
-	stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader)
-
-	// Check exit code
-	inspectResp, err := d.client.ContainerExecInspect(ctx, execResp.ID)
-	if err != nil {
-		return fmt.Errorf("failed to inspect exec: %w", err)
-	}
-
-	if inspectResp.ExitCode != 0 {
-		return fmt.Errorf("command exited with code %d", inspectResp.ExitCode)
-	}
-
-	return nil
-}
-
-// CreateContainer creates an ephemeral container from a base image (legacy interface).
-// For Phase 1, use CreateAndRunContainer instead.
-func (d *DockerRuntime) CreateContainer(baseImage string) (string, error) {
-	ctx := context.Background()
-	if err := d.initClient(); err != nil {
-		return "", err
-	}
-
-	// Ensure image is available
-	if err := d.PullImage(ctx, baseImage); err != nil {
-		return "", err
-	}
-
-	containerName := fmt.Sprintf("tuprwre-%s", uuid.New().String()[:8])
-
-	config := &container.Config{
-		Image: baseImage,
-		Cmd:   []string{"sleep", "3600"}, // Keep container running
-		Tty:   false,
-	}
-
-	resp, err := d.client.ContainerCreate(
-		ctx,
-		config,
-		&container.HostConfig{},
-		nil,
-		nil,
-		containerName,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create container: %w", err)
-	}
-
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("failed to start container: %w", err)
-	}
-
-	return resp.ID, nil
-}
-
 // Run executes a binary inside a container with proper I/O handling (for shim use).
 // Returns the exit code of the command.
 func (d *DockerRuntime) Run(opts RunOptions) (int, error) {
@@ -882,65 +798,6 @@ func (d *DockerRuntime) runViaPool(ctx context.Context, opts RunOptions) (int, e
 	return exitCode, nil
 }
 
-// ListExecutables returns all executable files in the container's PATH.
-func (d *DockerRuntime) ListExecutables(containerID string) ([]string, error) {
-	ctx := context.Background()
-	if err := d.initClient(); err != nil {
-		return nil, err
-	}
-
-	// Get PATH environment variable
-	inspect, err := d.client.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect container: %w", err)
-	}
-
-	pathEnv := "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-	for _, env := range inspect.Config.Env {
-		if len(env) > 5 && env[:5] == "PATH=" {
-			pathEnv = env[5:]
-			break
-		}
-	}
-
-	// Find executables in PATH directories
-	cmd := fmt.Sprintf("find $(echo %s | tr ':' ' ') -maxdepth 1 -type f -executable 2>/dev/null | sort -u", pathEnv)
-	execConfig := container.ExecOptions{
-		Cmd:          []string{"sh", "-c", cmd},
-		AttachStdout: true,
-		AttachStderr: false,
-	}
-
-	execResp, err := d.client.ContainerExecCreate(ctx, containerID, execConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	attachResp, err := d.client.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach to exec: %w", err)
-	}
-	defer attachResp.Close()
-
-	// Read output
-	output, err := io.ReadAll(attachResp.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read exec output: %w", err)
-	}
-
-	// Parse output into list
-	var executables []string
-	lines := string(output)
-	for _, line := range splitLines(lines) {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			executables = append(executables, line)
-		}
-	}
-
-	return executables, nil
-}
-
 // ListImageExecutables returns all executable files in an image's PATH.
 // It briefly starts a container from the image, runs find on PATH, and returns the list.
 func (d *DockerRuntime) ListImageExecutables(ctx context.Context, imageName string) ([]string, error) {
@@ -1038,11 +895,6 @@ func (d *DockerRuntime) ListImageExecutables(ctx context.Context, imageName stri
 	}
 
 	return executables, nil
-}
-
-// GetContainerFilesystem returns the container's filesystem root for analysis.
-func (d *DockerRuntime) GetContainerFilesystem(containerID string) (string, error) {
-	return "", fmt.Errorf("GetContainerFilesystem not implemented")
 }
 
 // splitLines splits a string by newlines.

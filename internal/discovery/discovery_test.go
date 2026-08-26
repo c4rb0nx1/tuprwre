@@ -175,22 +175,3 @@ func TestExtractNameFromPath(t *testing.T) {
 		}
 	}
 }
-
-func TestDiscoverFromFilesystemDiff_NotImplemented(t *testing.T) {
-	d := &Discoverer{}
-	_, err := d.DiscoverFromFilesystemDiff("container-id", "base-image")
-	if err == nil {
-		t.Fatal("expected error for unimplemented method")
-	}
-}
-
-func TestGetBinaryVersion_ReturnsEmpty(t *testing.T) {
-	d := &Discoverer{}
-	version, err := d.GetBinaryVersion("/usr/local/bin/tool", "container-id")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if version != "" {
-		t.Fatalf("expected empty version, got %q", version)
-	}
-}

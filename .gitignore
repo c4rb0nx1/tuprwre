@@ -22,3 +22,4 @@ output.json
 test.json
 *.out
 *.test
+/tprsh

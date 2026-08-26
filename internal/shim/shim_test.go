@@ -153,45 +153,6 @@ func TestRemove_NonexistentShim(t *testing.T) {
 	}
 }
 
-func TestRemoveAll_RemovesAllShims(t *testing.T) {
-	gen, _ := setupTestGenerator(t)
-
-	for _, name := range []string{"tool-a", "tool-b", "tool-c"} {
-		binary := discovery.Binary{Name: name, Path: "/usr/local/bin/" + name}
-		if err := gen.Create(binary, name+":latest", false); err != nil {
-			t.Fatalf("Create(%s) failed: %v", name, err)
-		}
-	}
-
-	removed, err := gen.RemoveAll()
-	if err != nil {
-		t.Fatalf("RemoveAll() failed: %v", err)
-	}
-	if len(removed) != 3 {
-		t.Fatalf("expected 3 removed shims, got %d", len(removed))
-	}
-
-	shims, err := gen.List()
-	if err != nil {
-		t.Fatalf("List() failed: %v", err)
-	}
-	if len(shims) != 0 {
-		t.Fatalf("expected 0 shims after RemoveAll(), got %d: %v", len(shims), shims)
-	}
-}
-
-func TestRemoveAll_EmptyDir(t *testing.T) {
-	gen, _ := setupTestGenerator(t)
-
-	removed, err := gen.RemoveAll()
-	if err != nil {
-		t.Fatalf("RemoveAll() failed on empty dir: %v", err)
-	}
-	if len(removed) != 0 {
-		t.Fatalf("expected 0 removed shims, got %d", len(removed))
-	}
-}
-
 func TestList_ReturnsShims(t *testing.T) {
 	gen, _ := setupTestGenerator(t)
 
@@ -256,31 +217,6 @@ func TestGetPath(t *testing.T) {
 	want := filepath.Join(tempDir, "bin", "mytool")
 	if got != want {
 		t.Fatalf("GetPath() = %q, want %q", got, want)
-	}
-}
-
-func TestValidateShimDir_InPath(t *testing.T) {
-	gen, tempDir := setupTestGenerator(t)
-
-	shimDir := filepath.Join(tempDir, "bin")
-	t.Setenv("PATH", shimDir+":/usr/bin:/bin")
-
-	if err := gen.ValidateShimDir(); err != nil {
-		t.Fatalf("ValidateShimDir() should pass when shimdir is in PATH: %v", err)
-	}
-}
-
-func TestValidateShimDir_NotInPath(t *testing.T) {
-	gen, _ := setupTestGenerator(t)
-
-	t.Setenv("PATH", "/usr/bin:/bin")
-
-	err := gen.ValidateShimDir()
-	if err == nil {
-		t.Fatal("expected error when shimdir is not in PATH")
-	}
-	if !strings.Contains(err.Error(), "not in PATH") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

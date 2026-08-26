@@ -125,27 +125,6 @@ func (g *Generator) Remove(binaryName string) error {
 	return os.Remove(shimPath)
 }
 
-func (g *Generator) RemoveAll() ([]string, error) {
-	shims, err := g.List()
-	if err != nil {
-		return nil, err
-	}
-
-	removed := make([]string, 0, len(shims))
-	var firstErr error
-	for _, shimName := range shims {
-		if err := g.Remove(shimName); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("failed to remove shim %q: %w", shimName, err)
-			}
-			continue
-		}
-		removed = append(removed, shimName)
-	}
-
-	return removed, firstErr
-}
-
 // List returns all existing shim scripts, filtering out names that
 // don't start with an alphanumeric character (e.g. "[", "test" shims
 // left over from earlier installs).
@@ -175,13 +154,4 @@ func isAlphanumeric(c byte) bool {
 // GetPath returns the full path to a shim.
 func (g *Generator) GetPath(binaryName string) string {
 	return filepath.Join(g.config.ShimDir, binaryName)
-}
-
-// ValidateShimDir ensures the shim directory is in the user's PATH.
-func (g *Generator) ValidateShimDir() error {
-	path := os.Getenv("PATH")
-	if !strings.Contains(path, g.config.ShimDir) {
-		return fmt.Errorf("shim directory %s is not in PATH. Add:\n  export PATH=\"$HOME/.tuprwre/bin:$PATH\"", g.config.ShimDir)
-	}
-	return nil
 }

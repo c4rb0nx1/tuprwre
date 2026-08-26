@@ -72,23 +72,6 @@ func (d *Discoverer) DiscoverBinaries(baseImage, newImage string) ([]Binary, err
 	return binaries, nil
 }
 
-// DiscoverFromFilesystemDiff compares filesystem states to find new binaries.
-// This is an alternative approach that diffs the entire filesystem.
-func (d *Discoverer) DiscoverFromFilesystemDiff(containerID, baseImage string) ([]Binary, error) {
-	// TODO: Implement filesystem-level diffing
-	// 1. Get base image filesystem
-	// 2. Get container filesystem
-	// 3. Find new executable files in common bin directories
-	// 4. Filter out system packages
-	return nil, fmt.Errorf("filesystem diff not implemented")
-}
-
-// GetBinaryVersion attempts to detect the version of a binary.
-func (d *Discoverer) GetBinaryVersion(binaryPath, containerID string) (string, error) {
-	// TODO: Try common version flags: --version, -v, -V, version
-	return "", nil
-}
-
 // FilterSystemBinaries removes common system binaries from the list.
 func (d *Discoverer) FilterSystemBinaries(binaries []Binary) []Binary {
 	systemBins := map[string]bool{

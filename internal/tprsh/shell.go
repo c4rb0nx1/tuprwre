@@ -39,12 +39,6 @@ type Shell struct {
 	stderr    io.Writer
 }
 
-// New builds a Shell rooted at workspace, writing audit records via auditor.
-// Approved commands run unconfined; use NewConfined to add an OS sandbox.
-func New(workspace string, auditor *Auditor) (*Shell, error) {
-	return NewConfined(workspace, auditor, nopConfiner{})
-}
-
 // NewConfined builds a Shell that wraps every approved command with confiner.
 func NewConfined(workspace string, auditor *Auditor, confiner Confiner) (*Shell, error) {
 	abs, err := filepath.Abs(workspace)
