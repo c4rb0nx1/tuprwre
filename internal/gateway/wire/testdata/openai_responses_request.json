@@ -1,0 +1,8 @@
+{
+  "_synthetic": "fixture - not captured from a live service",
+  "model": "gpt-synth",
+  "input": [
+    {"type": "function_call", "call_id": "call_synth_01", "name": "get_weather", "arguments": "{\"city\":\"Berlin\"}"},
+    {"type": "function_call_output", "call_id": "call_synth_01", "output": "{\"temp_c\":21}"}
+  ]
+}

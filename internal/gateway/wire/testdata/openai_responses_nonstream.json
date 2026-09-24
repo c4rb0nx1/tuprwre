@@ -1,0 +1,9 @@
+{
+  "_synthetic": "fixture - not captured from a live service",
+  "id": "resp_synth",
+  "object": "response",
+  "output": [
+    {"type": "message", "role": "assistant", "content": []},
+    {"type": "function_call", "id": "fc_synth_01", "call_id": "call_synth_01", "name": "get_weather", "arguments": "{\"city\":\"Berlin\"}"}
+  ]
+}

@@ -1,0 +1,14 @@
+: synthetic fixture - not captured from a live service
+event: content_block_start
+data: {this is not valid json
+
+event: content_block_delta
+data: {"index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}
+
+event: content_block_delta
+data: not json at all
+
+event: content_block_stop
+data: {"index":0}
+
+data: [malformed chat chunk

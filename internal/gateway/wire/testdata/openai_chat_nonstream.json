@@ -1,0 +1,17 @@
+{
+  "_synthetic": "fixture - not captured from a live service",
+  "id": "chatcmpl-synth",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {"id": "call_synth_01", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}}
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}

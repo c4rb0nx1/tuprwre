@@ -1,0 +1,11 @@
+{
+  "_synthetic": "fixture - not captured from a live service",
+  "model": "claude-synth",
+  "messages": [
+    {"role": "user", "content": "run it"},
+    {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_synth_01", "name": "Bash", "input": {"command": "pwd"}}]},
+    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_synth_01", "content": "ok\n/path", "is_error": false}]},
+    {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_synth_02", "name": "Read", "input": {"file_path": "/etc/shadow"}}]},
+    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_synth_02", "content": [{"type": "text", "text": "permission denied"}], "is_error": true}]}
+  ]
+}

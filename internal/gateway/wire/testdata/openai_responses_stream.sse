@@ -1,0 +1,21 @@
+: synthetic fixture - not captured from a live service
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_synth"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_synth_01","call_id":"call_synth_01","name":"get_weather","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_synth_01","output_index":0,"delta":"{\"city\":"}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_synth_01","output_index":0,"delta":"\"Berlin\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_synth_01","output_index":0,"arguments":"{\"city\":\"Berlin\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_synth_01","call_id":"call_synth_01","name":"get_weather","arguments":"{\"city\":\"Berlin\"}"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_synth"}}

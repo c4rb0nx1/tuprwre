@@ -1,0 +1,9 @@
+{
+  "_synthetic": "fixture - not captured from a live service",
+  "model": "gpt-synth",
+  "messages": [
+    {"role": "user", "content": "weather?"},
+    {"role": "assistant", "content": null, "tool_calls": [{"id": "call_synth_01", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}]},
+    {"role": "tool", "tool_call_id": "call_synth_01", "content": "sunny"}
+  ]
+}

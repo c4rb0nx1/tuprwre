@@ -1,0 +1,10 @@
+{
+  "_synthetic": "fixture - not captured from a live service",
+  "id": "msg_synth",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {"type": "text", "text": "Let me check that."},
+    {"type": "tool_use", "id": "toolu_synth_01", "name": "Bash", "input": {"command":"pwd"}}
+  ]
+}
