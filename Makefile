@@ -1,10 +1,14 @@
-.PHONY: all build build-gateway build-all test test-integration test-coverage stress-output-race bench-latency clean install install-system uninstall fmt lint deps verify dev run help
+.PHONY: all build build-gateway build-sensor build-report build-all test test-integration test-coverage stress-output-race bench-latency clean install install-system uninstall fmt lint deps verify dev run help
 
 # Binary name
 BINARY_NAME=tuprwre
 
 # Gateway binary name (record-only LLM reverse proxy)
 GATEWAY_BINARY_NAME=tprsh-gateway
+
+# Sensor recorder and intent/effect report binaries
+SENSOR_BINARY_NAME=tprsh-sensor
+REPORT_BINARY_NAME=tprsh-report
 
 # Build directory
 BUILD_DIR=./build
@@ -42,6 +46,20 @@ build-gateway:
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(GATEWAY_BINARY_NAME) ./cmd/tprsh-gateway
 	@echo "Build complete: $(BUILD_DIR)/$(GATEWAY_BINARY_NAME)"
+
+# Build the OS-effect sensor recorder binary
+build-sensor:
+	@echo "Building $(SENSOR_BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(SENSOR_BINARY_NAME) ./cmd/tprsh-sensor
+	@echo "Build complete: $(BUILD_DIR)/$(SENSOR_BINARY_NAME)"
+
+# Build the intent/effect reconciliation report binary
+build-report:
+	@echo "Building $(REPORT_BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(REPORT_BINARY_NAME) ./cmd/tprsh-report
+	@echo "Build complete: $(BUILD_DIR)/$(REPORT_BINARY_NAME)"
 
 # Build for multiple platforms
 build-all:
@@ -183,6 +201,8 @@ help:
 	@echo "Available targets:"
 	@echo "  build         - Build the binary"
 	@echo "  build-gateway - Build the tprsh-gateway binary"
+	@echo "  build-sensor  - Build the tprsh-sensor binary"
+	@echo "  build-report  - Build the tprsh-report binary"
 	@echo "  build-all     - Build for multiple platforms"
 	@echo "  test          - Run tests"
 	@echo "  test-coverage - Run tests with coverage report"
