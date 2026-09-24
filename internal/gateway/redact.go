@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"regexp"
 	"strings"
 
@@ -33,6 +35,11 @@ var redactionPatterns = []redactionPattern{
 	{regexp.MustCompile(`(?i)(aws_secret_access_key\s*[=:]\s*)["']?[A-Za-z0-9/+=]{20,}["']?`), "${1}[REDACTED:aws_secret_access_key]"},
 	// Bearer tokens.
 	{regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*`), "Bearer [REDACTED:bearer]"},
+	// HTTP Basic credentials in raw text, keeping the scheme.
+	{regexp.MustCompile(`(?i)\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/]+=*`), "Authorization: Basic [REDACTED:basic_auth]"},
+	// Credentials embedded in a URL's userinfo; the user is kept, the
+	// password is replaced.
+	{regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^:/?#@\s]+:)([^@/?#\s]+)(@)`), "${1}[REDACTED:url_password]${3}"},
 	// Anthropic-style and OpenAI-style API keys.
 	{regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{8,}`), "[REDACTED:api_key]"},
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`), "[REDACTED:api_key]"},
@@ -43,8 +50,9 @@ var redactionPatterns = []redactionPattern{
 	// JSON Web Tokens.
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}`), "[REDACTED:jwt]"},
 	// Generic key/token/secret/password assignments, keeping the key and the
-	// assignment operator.
-	{regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key)\b(\s*[:=]\s*)["']?[^\s"',;]+["']?`), "${1}${2}[REDACTED:credential]"},
+	// assignment operator. A quoted value may contain spaces, so the pattern
+	// prefers a balanced quote pair before the unquoted form.
+	{regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"',;]+)`), "${1}${2}[REDACTED:credential]"},
 }
 
 // sensitiveKeyWords are substrings that mark a JSON object key as holding a
@@ -83,8 +91,17 @@ func DefaultRedactor(e event.Event) event.Event {
 // It returns the re-encoded payload and the number of replacements. A payload
 // that is not valid JSON, or that contained no secrets, is returned unchanged.
 func redactJSON(raw json.RawMessage) (json.RawMessage, int) {
+	// UseNumber keeps integer fidelity: decoding to float64 would re-encode a
+	// large integer (e.g. an ID or offset) in scientific notation.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
+		return raw, 0
+	}
+	// Match json.Unmarshal's strictness: reject trailing non-whitespace data.
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
 		return raw, 0
 	}
 	v, n := redactValue(v, false)

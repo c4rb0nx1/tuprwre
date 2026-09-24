@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -77,7 +78,7 @@ func TestProxyNegotiatesGzipAndStillExtracts(t *testing.T) {
 		t.Error("upstream never saw a gzip negotiation")
 	}
 
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	events := sink.Events()
@@ -90,9 +91,11 @@ func TestProxyNegotiatesGzipAndStillExtracts(t *testing.T) {
 }
 
 // TestProxySkipsExtractorForEncodedResponse proves that a body still labelled
-// with an encoding Go's transport did not decode is never fed to a parser.
+// with an encoding Go's transport did not decode is never fed to a parser. The
+// body is a valid Anthropic tool-use payload, so an unguarded extractor would
+// emit one event; asserting zero events therefore discriminates the guard.
 func TestProxySkipsExtractorForEncodedResponse(t *testing.T) {
-	const body = "br-encoded-payload-that-is-not-json"
+	const body = `{"content":[{"type":"tool_use","id":"toolu_br","name":"Bash","input":{"command":"pwd"}}]}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// Brotli is never transparently decoded by net/http.
@@ -114,7 +117,7 @@ func TestProxySkipsExtractorForEncodedResponse(t *testing.T) {
 	if string(got) != body {
 		t.Fatalf("client body altered: %q", got)
 	}
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	if events := sink.Events(); len(events) != 0 {
@@ -183,7 +186,7 @@ func TestProxyDeduplicatesToolResultsAcrossRequests(t *testing.T) {
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","content":"two"}]}]}`)
 	waitForEvents(t, proxy, 2)
 
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	counts := map[string]int{}
@@ -280,7 +283,7 @@ func TestProxyBlockingSinkDoesNotStallClient(t *testing.T) {
 	}
 
 	close(sink.release)
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 }
@@ -303,7 +306,7 @@ func TestProxyRedactsToolResultByDefault(t *testing.T) {
 		t.Fatalf("post: %v", err)
 	}
 	resp.Body.Close()
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
@@ -349,7 +352,7 @@ func TestProxyDisableRedactionRecordsVerbatim(t *testing.T) {
 		t.Fatalf("post: %v", err)
 	}
 	resp.Body.Close()
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
@@ -385,7 +388,7 @@ func TestProxySurfacesRequestOverflowInStats(t *testing.T) {
 		t.Fatalf("post: %v", err)
 	}
 	resp.Body.Close()
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	if stats := proxy.Stats(); stats.ExtractorErrors == 0 {
@@ -420,7 +423,7 @@ func TestProxySinkErrorCountedAndLogged(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
@@ -432,5 +435,197 @@ func TestProxySinkErrorCountedAndLogged(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "hunter2") {
 		t.Errorf("log leaked payload values: %q", logs.String())
+	}
+}
+
+// TestProxyCloseWaitsForOpenStreamingResponse proves Close does not close the
+// event queue while a response body is still streaming: the streaming
+// response's event is recorded once the stream ends.
+func TestProxyCloseWaitsForOpenStreamingResponse(t *testing.T) {
+	firstChunk := "event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_close","name":"Bash"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"pwd\"}"}}` + "\n\n"
+	secondChunk := "event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		_, _ = io.WriteString(w, firstChunk)
+		fl.Flush()
+		<-release
+		_, _ = io.WriteString(w, secondChunk)
+		fl.Flush()
+	}))
+	defer upstream.Close()
+
+	sink := gateway.NewMemorySink()
+	front, proxy := newTestProxy(t, upstream.URL, sink)
+
+	resp, err := http.Post(front.URL+"/v1/messages", "application/json", bytes.NewReader([]byte(`{"model":"x"}`)))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Consume exactly the first chunk so the response is provably mid-stream
+	// and the proxy has installed (and tracked) its response recorder.
+	first := make([]byte, len(firstChunk))
+	if _, err := io.ReadFull(resp.Body, first); err != nil {
+		t.Fatalf("read first chunk: %v", err)
+	}
+
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- proxy.Close(context.Background()) }()
+
+	// Let Close begin draining while the stream is still open; it must wait.
+	time.Sleep(50 * time.Millisecond)
+
+	close(release)
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read rest: %v", err)
+	}
+	if got := string(first) + string(rest); got != firstChunk+secondChunk {
+		t.Fatalf("client body mismatch: %q", got)
+	}
+
+	select {
+	case err := <-closeErr:
+		if err != nil {
+			t.Fatalf("close: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not return after the response completed")
+	}
+
+	events := sink.Events()
+	if len(events) != 1 {
+		t.Fatalf("recorded %d events, want the streaming response's event: %+v", len(events), events)
+	}
+	if !events[0].Complete || events[0].ToolCallID != "toolu_close" {
+		t.Errorf("unexpected event: %+v", events[0])
+	}
+}
+
+// TestProxyCloseConcurrentWithTraffic stresses Close against concurrent
+// streaming requests. It must not panic or hang, and a later emit must never
+// target a closed channel. Run under -race.
+func TestProxyCloseConcurrentWithTraffic(t *testing.T) {
+	chunk := "event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_stress","name":"Bash"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n"
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for i := 0; i < 3; i++ {
+			_, _ = io.WriteString(w, chunk)
+			fl.Flush()
+			time.Sleep(time.Millisecond)
+		}
+	}))
+	defer upstream.Close()
+
+	sink := gateway.NewMemorySink()
+	front, proxy := newTestProxy(t, upstream.URL, sink)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := http.Post(front.URL+"/v1/messages", "application/json", bytes.NewReader([]byte(`{}`)))
+			if err != nil {
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}()
+	}
+
+	// Close while the requests above are mid-flight.
+	time.Sleep(500 * time.Microsecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := proxy.Close(ctx); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	wg.Wait()
+}
+
+// TestProxyCloseRespectsContextOnStuckSink proves Close returns the context
+// error instead of hanging when the sink never returns.
+func TestProxyCloseRespectsContextOnStuckSink(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"content":[{"type":"tool_use","id":"toolu_stuck","name":"Bash","input":{"command":"pwd"}}]}`)
+	}))
+	defer upstream.Close()
+
+	sink := newBlockingSink()
+	front, proxy := newTestProxy(t, upstream.URL, sink)
+
+	resp, err := http.Post(front.URL+"/v1/messages", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	select {
+	case <-sink.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("sink never started emitting")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err = proxy.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("Close took %v, ignoring the context bound", elapsed)
+	}
+	// Unblock the writer goroutine so it can exit.
+	close(sink.release)
+}
+
+// TestEncodedGuardIgnoresNonLLMPaths proves the Content-Encoding guard runs
+// only after the path selects an extractor: an encoded response on a non-LLM
+// endpoint must not inflate ExtractorErrors.
+func TestEncodedGuardIgnoresNonLLMPaths(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "br")
+		_, _ = io.WriteString(w, "not-json")
+	}))
+	defer upstream.Close()
+
+	sink := gateway.NewMemorySink()
+	front, proxy := newTestProxy(t, upstream.URL, sink)
+
+	resp, err := http.Get(front.URL + "/health")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if err := proxy.Close(context.Background()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if stats := proxy.Stats(); stats.ExtractorErrors != 0 {
+		t.Errorf("non-LLM path charged %d extractor error(s)", stats.ExtractorErrors)
+	}
+	if events := sink.Events(); len(events) != 0 {
+		t.Errorf("non-LLM path recorded events: %+v", events)
 	}
 }

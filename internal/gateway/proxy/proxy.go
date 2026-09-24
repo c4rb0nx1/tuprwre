@@ -10,6 +10,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -95,18 +96,24 @@ func New(cfg Config) (*Proxy, error) {
 		if resp.Request != nil && resp.Request.URL != nil {
 			path = resp.Request.URL.Path
 		}
-		// Go's transport transparently decompresses only the encodings it
-		// negotiated itself. Anything still labelled as encoded must never
-		// reach a parser.
-		if ce := resp.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
-			em.addExtractorErrors(1)
-			return nil
-		}
 		ex := wire.NewResponseExtractor(path, resp.Header.Get("Content-Type"), responseEmitter(em, cfg.SessionID))
 		if ex == nil {
 			return nil
 		}
-		resp.Body = &recordBody{inner: resp.Body, ex: ex, em: em}
+		// Go's transport transparently decompresses only the encodings it
+		// negotiated itself. Anything still labelled as encoded must never
+		// reach a parser. Checked only after the path selects an extractor so
+		// a non-LLM path is never charged an extractor error.
+		if ce := resp.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
+			em.addExtractorErrors(1)
+			return nil
+		}
+		body := &recordBody{inner: resp.Body, ex: ex, em: em}
+		if !em.track() {
+			// Recording has already stopped; leave the body untouched.
+			return nil
+		}
+		resp.Body = body
 		return nil
 	}
 	return &Proxy{ReverseProxy: rp, emitter: em}, nil
@@ -115,11 +122,17 @@ func New(cfg Config) (*Proxy, error) {
 // Stats returns a snapshot of the recording counters.
 func (p *Proxy) Stats() Stats { return p.emitter.stats() }
 
-// Close stops recording, waits for in-flight request parses and drains the
-// event queue into the sink. It does not close the sink.
-func (p *Proxy) Close() error {
-	p.emitter.close()
-	return nil
+// Close stops recording, waits for in-flight request parses and response-body
+// extractions to finish, then drains the event queue into the sink. Waiting is
+// bounded by ctx: Close returns ctx's error if the sink (or an open streaming
+// response) does not finish in time. It does not close the sink.
+//
+// Close must be called after traffic has been accepted; a Close that races an
+// in-progress request either waits for that request's recording or reports ctx
+// expiry. New recording work started after Close begins is rejected, so late
+// events are counted as dropped rather than recorded.
+func (p *Proxy) Close(ctx context.Context) error {
+	return p.emitter.close(ctx)
 }
 
 // recordingTransport passively records request bodies before forwarding them.
@@ -159,9 +172,15 @@ func (t *teeReadCloser) Read(p []byte) (int, error) { return t.reader.Read(p) }
 
 func (t *teeReadCloser) Close() error {
 	t.once.Do(func() {
-		t.em.parseWG.Add(1)
+		// Registration happens before the goroutine starts and before any
+		// close-drain can observe a zero counter, so no Add/Wait race exists.
+		if !t.em.track() {
+			// Recording has stopped; drop the buffered parse rather than
+			// start work whose events could only be discarded.
+			return
+		}
 		go func() {
-			defer t.em.parseWG.Done()
+			defer t.em.untrack()
 			safeFinish(t.ex)
 			t.em.addExtractorErrors(t.ex.Errors())
 		}()
@@ -196,6 +215,7 @@ func (b *recordBody) Close() error {
 
 func (b *recordBody) finish() {
 	b.once.Do(func() {
+		defer b.em.untrack()
 		safeFinish(b.ex)
 		b.em.addExtractorErrors(b.ex.Errors())
 	})

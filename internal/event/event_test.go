@@ -78,7 +78,7 @@ func TestOmittedFieldsAbsentFromJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, field := range []string{"tool_name", "arguments", "protocol", "result", "truncated"} {
+	for _, field := range []string{"tool_name", "arguments", "protocol", "result", "truncated", "complete"} {
 		if contains(string(raw), field) {
 			t.Errorf("expected %q to be omitted, JSON = %s", field, raw)
 		}
@@ -92,4 +92,41 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// completeField reports whether raw JSON contains a "complete" key.
+func completeField(raw []byte) bool { return contains(string(raw), `"complete"`) }
+
+// TestCompleteFieldScopedToToolCallIntent proves "complete" is serialized only
+// for tool-call intents, always present for them (including false).
+func TestCompleteFieldScopedToToolCallIntent(t *testing.T) {
+	incomplete := New(SourceGateway, KindToolCallIntent, time.Now())
+	raw, err := json.Marshal(incomplete)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !contains(string(raw), `"complete":false`) {
+		t.Errorf("incomplete intent missing complete:false: %s", raw)
+	}
+
+	complete := New(SourceGateway, KindToolCallIntent, time.Now())
+	complete.Complete = true
+	raw, err = json.Marshal(complete)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !contains(string(raw), `"complete":true`) {
+		t.Errorf("complete intent missing complete:true: %s", raw)
+	}
+
+	for _, kind := range []Kind{KindToolResult, KindExec, KindFileWrite} {
+		e := New(SourceGateway, kind, time.Now())
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", kind, err)
+		}
+		if completeField(raw) {
+			t.Errorf("kind %s serialized a complete field: %s", kind, raw)
+		}
+	}
 }

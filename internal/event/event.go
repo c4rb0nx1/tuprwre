@@ -86,7 +86,9 @@ type Event struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// Complete reports whether the arguments were fully received. For
 	// streaming protocols it is false until the terminating event arrived.
-	// The field is always serialized so that an incomplete call is visible.
+	// It applies only to KindToolCallIntent: MarshalJSON emits the field for
+	// intents only, always present (including false) so an incomplete call is
+	// visible, and omits it for every other Kind.
 	Complete bool `json:"complete"`
 	// Truncated reports that the arguments exceeded the extractor's per-call
 	// cap and were clipped.
@@ -108,6 +110,23 @@ type Event struct {
 	// RedactionCount is the number of individual replacements the redactor
 	// made in Arguments and Result.
 	RedactionCount int `json:"redaction_count,omitempty"`
+}
+
+// MarshalJSON serializes the event. The "complete" field is meaningful only
+// for tool_call_intent events, so it is emitted only then; for every other
+// Kind it is omitted, matching the package rule that fields not applicable to
+// a Kind are absent.
+func (e Event) MarshalJSON() ([]byte, error) {
+	// eventJSON is the plain field set; it still carries the "complete" field,
+	// which the non-intent wrapper shadows with a never-set, omitted pointer.
+	type eventJSON Event
+	if e.Kind == KindToolCallIntent {
+		return json.Marshal(eventJSON(e))
+	}
+	return json.Marshal(struct {
+		eventJSON
+		Complete *struct{} `json:"complete,omitempty"`
+	}{eventJSON: eventJSON(e)})
 }
 
 // New builds an event with the current schema version, a fresh random ID and

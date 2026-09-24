@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -119,7 +120,7 @@ func TestProxyStreamsIncrementallyAndRecords(t *testing.T) {
 		t.Fatalf("upstream body mismatch")
 	}
 
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	events := sink.Events()
@@ -170,7 +171,7 @@ func TestProxyRecordsRequestToolResult(t *testing.T) {
 		t.Fatalf("forwarded body altered\n got: %s\nwant: %s", received.String(), reqBody)
 	}
 
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	events := sink.Events()
@@ -204,7 +205,7 @@ func TestProxyNonStreamingJSON(t *testing.T) {
 		t.Fatalf("body altered: %s", got)
 	}
 
-	if err := proxy.Close(); err != nil {
+	if err := proxy.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	events := sink.Events()

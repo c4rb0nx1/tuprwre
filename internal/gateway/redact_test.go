@@ -166,3 +166,66 @@ func TestDefaultRedactorNoOpOnEmptyPayloads(t *testing.T) {
 		t.Errorf("unexpected redaction on empty event: %+v", got)
 	}
 }
+
+// TestDefaultRedactorPreservesLargeIntegers proves redaction does not corrupt
+// numeric payloads: decoding via float64 would re-encode this integer.
+func TestDefaultRedactorPreservesLargeIntegers(t *testing.T) {
+	e := event.New(event.SourceGateway, event.KindToolResult, time.Now())
+	e.Result = json.RawMessage(`{"offset":1234567890123456789,"password":"hunter2"}`)
+
+	got := DefaultRedactor(e)
+	if !got.Redacted {
+		t.Fatalf("expected redaction: %+v", got)
+	}
+	if !strings.Contains(string(got.Result), "1234567890123456789") {
+		t.Errorf("large integer lost fidelity: %s", got.Result)
+	}
+	if strings.Contains(string(got.Result), "hunter2") {
+		t.Errorf("secret survived: %s", got.Result)
+	}
+}
+
+// TestDefaultRedactorBasicAuthorization covers raw-text HTTP Basic credentials.
+func TestDefaultRedactorBasicAuthorization(t *testing.T) {
+	in := "Authorization: Basic " + fakeSecret("dXNlcjpw", "YXNzd29yZA==")
+	got, n := redactString(in)
+	if n == 0 {
+		t.Fatalf("no redaction applied to %q", in)
+	}
+	if !strings.Contains(got, "[REDACTED:basic_auth]") {
+		t.Errorf("redacted = %q, want it to contain %q", got, "[REDACTED:basic_auth]")
+	}
+}
+
+// TestDefaultRedactorURLUserinfo keeps the URL's user but redacts the password.
+func TestDefaultRedactorURLUserinfo(t *testing.T) {
+	in := "postgres://alice:" + fakeSecret("s3cr", "3tpass") + "@db.example.com:5432/app"
+	got, n := redactString(in)
+	if n == 0 {
+		t.Fatalf("no redaction applied to %q", in)
+	}
+	if !strings.Contains(got, "alice") {
+		t.Errorf("user was dropped: %q", got)
+	}
+	if strings.Contains(got, "s3cr3tpass") {
+		t.Errorf("password survived: %q", got)
+	}
+	if !strings.Contains(got, "[REDACTED:url_password]") || !strings.Contains(got, "@db.example.com:5432/app") {
+		t.Errorf("unexpected rewrite: %q", got)
+	}
+}
+
+// TestDefaultRedactorQuotedAssignmentWithSpaces covers a quoted assignment
+// whose value contains whitespace.
+func TestDefaultRedactorQuotedAssignmentWithSpaces(t *testing.T) {
+	got, n := redactString(`password = "correct horse battery staple"`)
+	if n == 0 {
+		t.Fatal("no redaction applied")
+	}
+	if strings.Contains(got, "correct horse") {
+		t.Errorf("quoted value survived: %q", got)
+	}
+	if !strings.Contains(got, "[REDACTED:credential]") {
+		t.Errorf("unexpected rewrite: %q", got)
+	}
+}

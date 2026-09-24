@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"log"
 	"sync"
 
@@ -45,36 +46,71 @@ type emitter struct {
 
 	ch chan event.Event
 	mu sync.Mutex
+	// cond is broadcast whenever in-flight work completes or the drain
+	// deadline expires, so close can wait without a WaitGroup Add/Wait race.
+	cond *sync.Cond
 
+	// draining is set once close begins; it rejects new tracked work so that
+	// the in-flight counter can only decrease to zero.
+	draining      bool
 	closed        bool
+	inflight      int
 	eventsEmitted int
 	eventsDropped int
 	sinkErrors    int
 	extractorErrs int
 
-	writerWG sync.WaitGroup
-	parseWG  sync.WaitGroup
+	// writerDone is closed when the sink writer goroutine exits; it is closed
+	// at construction when there is no sink.
+	writerDone chan struct{}
 }
 
 func newEmitter(sink gateway.Sink, redactor gateway.Redactor, errLog *log.Logger) *emitter {
 	e := &emitter{
-		sink:     sink,
-		redactor: redactor,
-		errLog:   errLog,
-		seen:     newSeenSet(seenCapacity),
-		ch:       make(chan event.Event, eventQueueSize),
+		sink:       sink,
+		redactor:   redactor,
+		errLog:     errLog,
+		seen:       newSeenSet(seenCapacity),
+		ch:         make(chan event.Event, eventQueueSize),
+		writerDone: make(chan struct{}),
 	}
+	e.cond = sync.NewCond(&e.mu)
 	if sink != nil {
-		e.writerWG.Add(1)
 		go e.run()
+	} else {
+		close(e.writerDone)
 	}
 	return e
+}
+
+// track registers one unit of in-flight recording work (a buffered request
+// parse or a response-body extraction) and reports whether it was accepted.
+// It returns false once close has begun: callers must not start new work whose
+// events could only be dropped.
+func (e *emitter) track() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.draining {
+		return false
+	}
+	e.inflight++
+	return true
+}
+
+// untrack releases one unit registered by track.
+func (e *emitter) untrack() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.inflight--
+	if e.draining && e.inflight == 0 {
+		e.cond.Broadcast()
+	}
 }
 
 // run drains the event queue into the sink. It is the only goroutine that
 // touches the sink.
 func (e *emitter) run() {
-	defer e.writerWG.Done()
+	defer close(e.writerDone)
 	for ev := range e.ch {
 		if err := e.sink.Emit(ev); err != nil {
 			e.mu.Lock()
@@ -135,19 +171,69 @@ func (e *emitter) stats() Stats {
 	}
 }
 
-// close stops accepting events once all in-flight request parses have
-// finished, then drains the queue into the sink.
-func (e *emitter) close() {
-	e.parseWG.Wait()
+// close stops accepting events, waits for all in-flight recording work
+// (request-body parses and response-body extractions) to finish so their
+// events reach the queue, then drains the queue into the sink. Waiting is
+// bounded by ctx: if the sink is stuck, close returns ctx's error having
+// closed the queue but before the writer drained it. A close that begins
+// while a response body is still streaming blocks until that body finishes
+// (EOF or Close) or ctx expires; it never permanently hangs on its own.
+func (e *emitter) close(ctx context.Context) error {
 	e.mu.Lock()
-	if e.closed {
-		e.mu.Unlock()
-		return
-	}
-	e.closed = true
-	close(e.ch)
+	e.draining = true
 	e.mu.Unlock()
-	e.writerWG.Wait()
+
+	drainErr := e.waitInflight(ctx)
+
+	// Stop accepting events even when the drain timed out, so late emitters
+	// are counted as dropped rather than enqueued after Close returns.
+	e.mu.Lock()
+	if !e.closed {
+		e.closed = true
+		close(e.ch)
+	}
+	e.mu.Unlock()
+
+	if drainErr != nil {
+		return drainErr
+	}
+	select {
+	case <-e.writerDone:
+		return nil
+	default:
+	}
+	select {
+	case <-e.writerDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// waitInflight blocks until no tracked work remains, or ctx is done. It
+// returns ctx's error only when it gave up waiting; a full drain always
+// reports success.
+func (e *emitter) waitInflight(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.inflight == 0 {
+		return nil
+	}
+	// Broadcast on cancellation so a cond.Wait that would otherwise park past
+	// the deadline wakes up and re-checks ctx.
+	stop := context.AfterFunc(ctx, func() {
+		e.mu.Lock()
+		e.cond.Broadcast()
+		e.mu.Unlock()
+	})
+	defer stop()
+	for e.inflight > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		e.cond.Wait()
+	}
+	return nil
 }
 
 func (e *emitter) logf(format string, args ...any) {
