@@ -34,12 +34,14 @@ const shutdownBound = 5 * time.Second
 
 // options holds the validated command-line configuration.
 type options struct {
-	listen      string
-	upstream    *url.URL
-	logPath     string
-	sessionID   string
-	noRedact    bool
-	allowRemote bool
+	listen       string
+	upstream     *url.URL
+	logPath      string
+	logDefaulted bool
+	sessionID    string
+	noRedact     bool
+	noLog        bool
+	allowRemote  bool
 }
 
 // parseFlags parses and validates args. Warnings (not errors) are written to
@@ -51,7 +53,8 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 	var (
 		listen      = fs.String("listen", "127.0.0.1:0", "address to listen on (loopback only unless --allow-remote)")
 		upstream    = fs.String("upstream", "", "upstream LLM API base URL (required), e.g. https://api.anthropic.com")
-		logPath     = fs.String("log", "", "path to the JSONL event log (created 0600, parent dir 0700)")
+		logPath     = fs.String("log", "", "path to the JSONL event log (created 0600, parent dir 0700); default: $XDG_STATE_HOME/tprsh/gateway/<session-id>.jsonl")
+		noLog       = fs.Bool("no-log", false, "disable recording entirely; no log file is written (mutually exclusive with --log)")
 		sessionID   = fs.String("session-id", "", "session identifier attached to every event (default: random)")
 		noRedact    = fs.Bool("no-redact", false, "disable redaction of secret-looking values (records raw payloads)")
 		allowRemote = fs.Bool("allow-remote", false, "permit listening on a non-loopback address")
@@ -68,6 +71,7 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		logPath:     *logPath,
 		sessionID:   *sessionID,
 		noRedact:    *noRedact,
+		noLog:       *noLog,
 		allowRemote: *allowRemote,
 	}
 	if *upstream == "" {
@@ -99,10 +103,41 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		}
 		opts.sessionID = id
 	}
+
+	if opts.noLog && opts.logPath != "" {
+		return nil, errors.New("--no-log and --log are mutually exclusive")
+	}
+	switch {
+	case opts.noLog:
+		opts.logPath = ""
+		fmt.Fprintln(stderr, "tprsh-gateway: WARNING: recording disabled (--no-log); the gateway will forward traffic without writing events")
+	case opts.logPath == "":
+		path, err := defaultLogPath(os.Getenv("XDG_STATE_HOME"), opts.sessionID)
+		if err != nil {
+			return nil, err
+		}
+		opts.logPath = path
+		opts.logDefaulted = true
+	}
+
 	if opts.noRedact {
 		fmt.Fprintln(stderr, "tprsh-gateway: WARNING: redaction disabled (--no-redact); recorded payloads may contain credentials")
 	}
 	return opts, nil
+}
+
+// defaultLogPath returns the default JSONL log path for a session:
+// $XDG_STATE_HOME/tprsh/gateway/<session-id>.jsonl, or
+// ~/.local/state/tprsh/gateway/<session-id>.jsonl when XDG_STATE_HOME is unset.
+func defaultLogPath(stateHome, sessionID string) (string, error) {
+	if stateHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve default log path: %w", err)
+		}
+		stateHome = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(stateHome, "tprsh", "gateway", sessionID+".jsonl"), nil
 }
 
 // isLoopbackListen reports whether the listen address binds a loopback host.
@@ -147,12 +182,13 @@ func main() {
 // gracefully within shutdownBound and prints the final recording stats as one
 // JSON line on stderr.
 func run(opts *options) error {
-	sink, err := openSink(opts.logPath)
+	sink, err := openSink(opts.logPath, opts.logDefaulted, os.Stderr)
 	if err != nil {
 		return err
 	}
 	if sink != nil {
 		defer sink.Close()
+		fmt.Fprintf(os.Stderr, "tprsh-gateway: recording events to %s\n", opts.logPath)
 	}
 
 	var recordSink gateway.Sink
@@ -189,7 +225,8 @@ func run(opts *options) error {
 	case <-sigCtx.Done():
 	case err := <-serveErr:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			_ = p.Close(context.Background())
+			// Bound the drain here too: a stuck stream must not hang shutdown.
+			_ = closeBounded(p, shutdownBound)
 			_ = sink.Close()
 			return err
 		}
@@ -201,9 +238,7 @@ func run(opts *options) error {
 	_ = srv.Shutdown(shutdownCtx)
 	cancel()
 
-	closeCtx, cancelClose := context.WithTimeout(context.Background(), shutdownBound)
-	closeErr := p.Close(closeCtx)
-	cancelClose()
+	closeErr := closeBounded(p, shutdownBound)
 	if closeErr != nil {
 		fmt.Fprintf(os.Stderr, "tprsh-gateway: shutdown did not drain within %s: %v\n", shutdownBound, closeErr)
 	}
@@ -216,9 +251,24 @@ func run(opts *options) error {
 	return nil
 }
 
-// openSink opens the JSONL sink, creating the parent directory 0700. An empty
-// path disables recording (the proxy still forwards traffic).
-func openSink(path string) (*gateway.FileSink, error) {
+// closeBounded stops recording and waits for the pipeline to drain, bounded by
+// bound. Both shutdown paths use it so neither can hang on a stuck stream.
+func closeBounded(p *proxy.Proxy, bound time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	return p.Close(ctx)
+}
+
+// openSink opens the JSONL sink, creating the parent directory 0700. It also
+// tightens permissions that a previous run (or another process) may have left
+// loose: an existing log file is chmod'ed to 0600, and, when manageDir is set
+// (the default state directory this process owns), an existing parent directory
+// to 0700. Each tightening emits a warning on stderr. An empty path disables
+// recording (the proxy still forwards traffic).
+//
+// The parent directory of an explicit --log path is never chmod'ed: it may be a
+// shared location such as /tmp that this process does not own.
+func openSink(path string, manageDir bool, stderr io.Writer) (*gateway.FileSink, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -226,8 +276,47 @@ func openSink(path string) (*gateway.FileSink, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
+		if manageDir {
+			if err := tightenDir(dir, stderr); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := tightenFile(path, stderr); err != nil {
+		return nil, err
 	}
 	return gateway.NewFileSink(path)
+}
+
+// tightenDir chmods an existing directory to 0700 when it grants group or other
+// access, warning first. The directory must be one this process owns.
+func tightenDir(dir string, stderr io.Writer) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+	fmt.Fprintf(stderr, "tprsh-gateway: WARNING: tightening directory %s to 0700 (was %04o)\n", dir, info.Mode().Perm())
+	return os.Chmod(dir, 0o700)
+}
+
+// tightenFile chmods an existing log file to 0600 when it grants group or other
+// access, warning first. A file this process creates is already 0600.
+func tightenFile(path string, stderr io.Writer) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+	fmt.Fprintf(stderr, "tprsh-gateway: WARNING: tightening log file %s to 0600 (was %04o)\n", path, info.Mode().Perm())
+	return os.Chmod(path, 0o600)
 }
 
 // newLogger returns the logger for gateway-internal errors (sink failures,

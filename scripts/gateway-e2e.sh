@@ -12,11 +12,14 @@
 # Everything runs under a mktemp directory with fake credentials. When `pi` is
 # unavailable (PI_BIN=missing), the script falls back to a stdlib-Python fake
 # harness that replays the same two-turn loop; it prints a clear notice that the
-# real-harness path did not run and why.
+# real-harness path did not run and why, and then exits 3 so a caller keying on
+# exit status cannot mistake a fallback run for a real one.
 #
 # Env:
-#   PI_BIN   harness binary (default: pi; set to "missing" to force the fallback)
-#   KEEP=1   keep the temp directory on exit
+#   PI_BIN          harness binary (default: pi; set to "missing" to force the fallback)
+#   ALLOW_FAKE=1    accept the fallback path as success (exit 0) instead of exit 3
+#   UPDATE_EVIDENCE=1  refresh testdata/e2e/ from this run (default: leave committed evidence untouched)
+#   KEEP=1          keep the temp directory on exit
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -405,16 +408,32 @@ echo "e2e: harness_mode=$HARNESS_MODE"
 echo "e2e: summary $SUMMARY"
 
 # --- preserve redacted evidence --------------------------------------------
-ART_DIR="$REPO_ROOT/testdata/e2e"
-mkdir -p "$ART_DIR"
-cp "$WORKDIR/gateway.jsonl" "$ART_DIR/gateway.jsonl"
-cp "$WORKDIR/gateway.err" "$ART_DIR/gateway.stderr"
-cp "$WORKDIR/upstream-requests.jsonl" "$ART_DIR/upstream-requests.jsonl"
-cp "$WORKDIR/harness.out" "$ART_DIR/harness.txt"
-{
-    echo "harness_mode=$HARNESS_MODE"
-    echo "$SUMMARY"
-} > "$ART_DIR/summary.txt"
-echo "e2e: copied redacted evidence to $ART_DIR"
+# Committed fixtures under testdata/e2e/ are the real-harness evidence; a local
+# run must not clobber them unless it explicitly opts in.
+if [ "${UPDATE_EVIDENCE:-0}" = "1" ]; then
+    ART_DIR="$REPO_ROOT/testdata/e2e"
+    mkdir -p "$ART_DIR"
+    cp "$WORKDIR/gateway.jsonl" "$ART_DIR/gateway.jsonl"
+    cp "$WORKDIR/gateway.err" "$ART_DIR/gateway.stderr"
+    cp "$WORKDIR/upstream-requests.jsonl" "$ART_DIR/upstream-requests.jsonl"
+    cp "$WORKDIR/harness.out" "$ART_DIR/harness.txt"
+    {
+        echo "harness_mode=$HARNESS_MODE"
+        echo "$SUMMARY"
+    } > "$ART_DIR/summary.txt"
+    echo "e2e: updated committed evidence in $ART_DIR"
+else
+    echo "e2e: left testdata/e2e/ untouched (set UPDATE_EVIDENCE=1 to refresh it)"
+fi
 
-echo "e2e: PASS ($HARNESS_MODE harness)"
+# --- exit status reflects which harness actually ran ------------------------
+if [ "$HARNESS_MODE" = "pi" ]; then
+    echo "e2e: PASS (pi harness)"
+    exit 0
+fi
+if [ "${ALLOW_FAKE:-0}" = "1" ]; then
+    echo "e2e: PASS (fake harness; ALLOW_FAKE=1)"
+    exit 0
+fi
+echo "e2e: FAILED: the real harness did not run ('$PI_BIN' unavailable); set ALLOW_FAKE=1 to accept the fallback" >&2
+exit 3
