@@ -29,14 +29,16 @@ func (c *openAIChatStream) Write(p []byte) (int, error) { return c.sc.Write(p) }
 
 func (c *openAIChatStream) Finish() {
 	c.sc.finish()
-	c.flushAll()
+	// Any call still in flight never saw finish_reason=tool_calls or [DONE]:
+	// the stream ended early (or the client disconnected), so it is incomplete.
+	c.flushAll(false)
 }
 
 func (c *openAIChatStream) Errors() int { return c.errs }
 
 func (c *openAIChatStream) onEvent(_, data string) {
 	if data == "[DONE]" {
-		c.flushAll()
+		c.flushAll(true)
 		return
 	}
 	var chunk struct {
@@ -78,12 +80,14 @@ func (c *openAIChatStream) onEvent(_, data string) {
 			call.appendArgs([]byte(tc.Function.Arguments))
 		}
 		if choice.FinishReason == "tool_calls" {
-			c.flushAll()
+			c.flushAll(true)
 		}
 	}
 }
 
-func (c *openAIChatStream) flushAll() {
+// flushAll emits every in-flight call. complete is true only when the caller
+// saw a terminating event (finish_reason=tool_calls or [DONE]).
+func (c *openAIChatStream) flushAll(complete bool) {
 	idxs := make([]int, 0, len(c.calls))
 	for idx := range c.calls {
 		idxs = append(idxs, idx)
@@ -93,7 +97,7 @@ func (c *openAIChatStream) flushAll() {
 		call := c.calls[idx]
 		delete(c.calls, idx)
 		if c.emit != nil {
-			c.emit(call.toolCall(ProtocolOpenAIChat))
+			c.emit(call.toolCall(ProtocolOpenAIChat, complete))
 		}
 	}
 }
@@ -122,7 +126,7 @@ func parseOpenAIChatMessage(body []byte, emit EmitToolCall) int {
 			c := &partialCall{id: tc.ID, name: tc.Function.Name}
 			c.appendArgs([]byte(tc.Function.Arguments))
 			if emit != nil {
-				emit(c.toolCall(ProtocolOpenAIChat))
+				emit(c.toolCall(ProtocolOpenAIChat, true))
 			}
 		}
 	}

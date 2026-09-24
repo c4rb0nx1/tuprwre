@@ -86,7 +86,8 @@ type Event struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// Complete reports whether the arguments were fully received. For
 	// streaming protocols it is false until the terminating event arrived.
-	Complete bool `json:"complete,omitempty"`
+	// The field is always serialized so that an incomplete call is visible.
+	Complete bool `json:"complete"`
 	// Truncated reports that the arguments exceeded the extractor's per-call
 	// cap and were clipped.
 	Truncated bool `json:"truncated,omitempty"`
@@ -98,6 +99,15 @@ type Event struct {
 	Result json.RawMessage `json:"result,omitempty"`
 	// IsError reports that the tool result was flagged as an error.
 	IsError bool `json:"is_error,omitempty"`
+
+	// --- Redaction fields ---
+
+	// Redacted reports that the redactor replaced at least one secret-looking
+	// substring in Arguments or Result.
+	Redacted bool `json:"redacted,omitempty"`
+	// RedactionCount is the number of individual replacements the redactor
+	// made in Arguments and Result.
+	RedactionCount int `json:"redaction_count,omitempty"`
 }
 
 // New builds an event with the current schema version, a fresh random ID and

@@ -14,19 +14,29 @@ import (
 	"github.com/c4rb0nx1/tuprwre/internal/gateway"
 )
 
-func newTestProxy(t *testing.T, upstream string, sink gateway.Sink) *httptest.Server {
+func newTestProxy(t *testing.T, upstream string, sink gateway.Sink) (*httptest.Server, *Proxy) {
 	t.Helper()
-	u, err := url.Parse(upstream)
+	return newTestProxyConfig(t, Config{Upstream: mustParseURL(t, upstream), Sink: sink, SessionID: "sess-test"})
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("parse upstream: %v", err)
 	}
-	rp, err := New(Config{Upstream: u, Sink: sink, SessionID: "sess-test"})
+	return u
+}
+
+func newTestProxyConfig(t *testing.T, cfg Config) (*httptest.Server, *Proxy) {
+	t.Helper()
+	p, err := New(cfg)
 	if err != nil {
 		t.Fatalf("new proxy: %v", err)
 	}
-	srv := httptest.NewServer(rp)
+	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, p
 }
 
 // TestProxyStreamsIncrementallyAndRecords drives a byte-identical SSE
@@ -63,7 +73,7 @@ func TestProxyStreamsIncrementallyAndRecords(t *testing.T) {
 	defer upstream.Close()
 
 	sink := gateway.NewMemorySink()
-	front := newTestProxy(t, upstream.URL, sink)
+	front, proxy := newTestProxy(t, upstream.URL, sink)
 
 	resp, err := http.Post(front.URL+"/v1/messages", "application/json", bytes.NewReader([]byte(`{"model":"x"}`)))
 	if err != nil {
@@ -109,6 +119,9 @@ func TestProxyStreamsIncrementallyAndRecords(t *testing.T) {
 		t.Fatalf("upstream body mismatch")
 	}
 
+	if err := proxy.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 	events := sink.Events()
 	if len(events) != 1 {
 		t.Fatalf("recorded %d events, want 1: %+v", len(events), events)
@@ -144,7 +157,7 @@ func TestProxyRecordsRequestToolResult(t *testing.T) {
 	defer upstream.Close()
 
 	sink := gateway.NewMemorySink()
-	front := newTestProxy(t, upstream.URL, sink)
+	front, proxy := newTestProxy(t, upstream.URL, sink)
 
 	reqBody := `{"model":"x","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"ok"}]}]}`
 	resp, err := http.Post(front.URL+"/v1/messages", "application/json", bytes.NewReader([]byte(reqBody)))
@@ -157,6 +170,9 @@ func TestProxyRecordsRequestToolResult(t *testing.T) {
 		t.Fatalf("forwarded body altered\n got: %s\nwant: %s", received.String(), reqBody)
 	}
 
+	if err := proxy.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 	events := sink.Events()
 	if len(events) != 1 {
 		t.Fatalf("recorded %d events, want 1: %+v", len(events), events)
@@ -176,7 +192,7 @@ func TestProxyNonStreamingJSON(t *testing.T) {
 	defer upstream.Close()
 
 	sink := gateway.NewMemorySink()
-	front := newTestProxy(t, upstream.URL, sink)
+	front, proxy := newTestProxy(t, upstream.URL, sink)
 
 	resp, err := http.Post(front.URL+"/v1/messages", "application/json", bytes.NewReader([]byte(`{}`)))
 	if err != nil {
@@ -188,6 +204,9 @@ func TestProxyNonStreamingJSON(t *testing.T) {
 		t.Fatalf("body altered: %s", got)
 	}
 
+	if err := proxy.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 	events := sink.Events()
 	if len(events) != 1 || events[0].ToolCallID != "toolu_ns" || string(events[0].Arguments) != `{"command":"pwd"}` {
 		t.Fatalf("unexpected events: %+v", events)
@@ -202,7 +221,7 @@ func TestProxyNilSinkForwards(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	front := newTestProxy(t, upstream.URL, nil)
+	front, _ := newTestProxy(t, upstream.URL, nil)
 	resp, err := http.Get(front.URL + "/v1/messages")
 	if err != nil {
 		t.Fatalf("get: %v", err)

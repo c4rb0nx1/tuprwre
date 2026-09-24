@@ -31,8 +31,10 @@ func (r *openAIResponsesStream) Write(p []byte) (int, error) { return r.sc.Write
 
 func (r *openAIResponsesStream) Finish() {
 	r.sc.finish()
+	// Calls still in flight never saw response.output_item.done: the stream
+	// ended early (or the client disconnected), so they are incomplete.
 	for _, key := range r.order {
-		r.flush(key)
+		r.flush(key, false)
 	}
 }
 
@@ -138,18 +140,20 @@ func (r *openAIResponsesStream) onEvent(event, data string) {
 			c.trunc = false
 			c.appendArgs([]byte(ev.Item.Arguments))
 		}
-		r.flush(key)
+		r.flush(key, true)
 	}
 }
 
-func (r *openAIResponsesStream) flush(key string) {
+// flush emits the call at key. complete is true only when the caller saw the
+// terminating response.output_item.done event.
+func (r *openAIResponsesStream) flush(key string, complete bool) {
 	c := r.calls[key]
 	if c == nil {
 		return
 	}
 	delete(r.calls, key)
 	if r.emit != nil {
-		r.emit(c.toolCall(ProtocolOpenAIResponses))
+		r.emit(c.toolCall(ProtocolOpenAIResponses, complete))
 	}
 }
 
@@ -187,7 +191,7 @@ func parseOpenAIResponsesOutput(body []byte, emit EmitToolCall) int {
 		}
 		c.appendArgs([]byte(item.Arguments))
 		if emit != nil {
-			emit(c.toolCall(ProtocolOpenAIResponses))
+			emit(c.toolCall(ProtocolOpenAIResponses, true))
 		}
 	}
 	return 0

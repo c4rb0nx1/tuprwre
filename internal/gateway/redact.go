@@ -1,0 +1,165 @@
+package gateway
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+
+	"github.com/c4rb0nx1/tuprwre/internal/event"
+)
+
+// Redactor transforms an event immediately before it is handed to a Sink. It
+// must return the event to record; returning the input unchanged disables
+// redaction for that event.
+type Redactor func(event.Event) event.Event
+
+// redactionPattern is one ordered secret-matching rule. replace is a
+// regexp.ReplaceAllString expansion applied to the matched substring; it may
+// reference capture groups.
+type redactionPattern struct {
+	re      *regexp.Regexp
+	replace string
+}
+
+// redactionPatterns are applied in order. Specific credential shapes are
+// matched before the generic "key = value" assignment so that the reported
+// kind is as precise as possible.
+var redactionPatterns = []redactionPattern{
+	// PEM private-key blocks, including newlines.
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), "[REDACTED:private_key]"},
+	// AWS access key IDs.
+	{regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), "[REDACTED:aws_access_key_id]"},
+	// AWS secret access keys, keeping the field name.
+	{regexp.MustCompile(`(?i)(aws_secret_access_key\s*[=:]\s*)["']?[A-Za-z0-9/+=]{20,}["']?`), "${1}[REDACTED:aws_secret_access_key]"},
+	// Bearer tokens.
+	{regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*`), "Bearer [REDACTED:bearer]"},
+	// Anthropic-style and OpenAI-style API keys.
+	{regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{8,}`), "[REDACTED:api_key]"},
+	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`), "[REDACTED:api_key]"},
+	// GitHub tokens.
+	{regexp.MustCompile(`\b(?:ghp|gho|ghs|ghr|github_pat)_[A-Za-z0-9_]{10,}`), "[REDACTED:github_token]"},
+	// Slack tokens.
+	{regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{8,}`), "[REDACTED:slack_token]"},
+	// JSON Web Tokens.
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}`), "[REDACTED:jwt]"},
+	// Generic key/token/secret/password assignments, keeping the key and the
+	// assignment operator.
+	{regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key)\b(\s*[:=]\s*)["']?[^\s"',;]+["']?`), "${1}${2}[REDACTED:credential]"},
+}
+
+// sensitiveKeyWords are substrings that mark a JSON object key as holding a
+// credential; a string value under such a key is replaced wholesale.
+var sensitiveKeyWords = []string{
+	"password", "passwd", "secret", "token", "api_key", "apikey",
+	"authorization", "credential", "access_key", "private_key",
+}
+
+// DefaultRedactor replaces secret-looking substrings in an event's Arguments
+// and Result with "[REDACTED:<kind>]" markers. JSON payloads stay valid JSON:
+// only string values are rewritten, never structure. Payloads that are not
+// valid JSON are left untouched.
+func DefaultRedactor(e event.Event) event.Event {
+	count := 0
+	if len(e.Arguments) > 0 {
+		if out, n := redactJSON(e.Arguments); n > 0 {
+			e.Arguments = out
+			count += n
+		}
+	}
+	if len(e.Result) > 0 {
+		if out, n := redactJSON(e.Result); n > 0 {
+			e.Result = out
+			count += n
+		}
+	}
+	if count > 0 {
+		e.Redacted = true
+		e.RedactionCount += count
+	}
+	return e
+}
+
+// redactJSON walks a JSON payload and redacts secrets within its string values.
+// It returns the re-encoded payload and the number of replacements. A payload
+// that is not valid JSON, or that contained no secrets, is returned unchanged.
+func redactJSON(raw json.RawMessage) (json.RawMessage, int) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw, 0
+	}
+	v, n := redactValue(v, false)
+	if n == 0 {
+		return raw, 0
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return raw, 0
+	}
+	return out, n
+}
+
+// redactValue rewrites string values, recursing into objects and arrays.
+// sensitiveKey marks a value whose enclosing object key names a credential.
+func redactValue(v any, sensitiveKey bool) (any, int) {
+	switch t := v.(type) {
+	case string:
+		if sensitiveKey {
+			return "[REDACTED:field]", 1
+		}
+		return redactString(t)
+	case map[string]any:
+		count := 0
+		for k, val := range t {
+			nv, n := redactValue(val, isSensitiveKey(k))
+			if n > 0 {
+				t[k] = nv
+				count += n
+			}
+		}
+		return t, count
+	case []any:
+		count := 0
+		for i, val := range t {
+			nv, n := redactValue(val, false)
+			if n > 0 {
+				t[i] = nv
+				count += n
+			}
+		}
+		return t, count
+	default:
+		return v, 0
+	}
+}
+
+// redactString applies every pattern to s, returning the rewritten string and
+// the number of replacements.
+func redactString(s string) (string, int) {
+	count := 0
+	for _, p := range redactionPatterns {
+		var n int
+		s, n = applyPattern(p, s)
+		count += n
+	}
+	return s, count
+}
+
+func applyPattern(p redactionPattern, s string) (string, int) {
+	count := 0
+	out := p.re.ReplaceAllStringFunc(s, func(m string) string {
+		count++
+		return p.re.ReplaceAllString(m, p.replace)
+	})
+	return out, count
+}
+
+// isSensitiveKey reports whether a JSON object key names a credential.
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, w := range sensitiveKeyWords {
+		if strings.Contains(lower, w) {
+			return true
+		}
+	}
+	return false
+}

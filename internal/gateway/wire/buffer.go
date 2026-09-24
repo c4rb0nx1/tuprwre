@@ -71,10 +71,12 @@ func (c *partialCall) appendArgs(delta []byte) {
 	c.args = append(c.args, delta...)
 }
 
-// toolCall materializes the accumulated state for emission.
-func (c *partialCall) toolCall(protocol string) ToolCall {
+// toolCall materializes the accumulated state for emission. complete is true
+// only when the protocol's terminating event was observed; an unterminated
+// (aborted) call is emitted with Complete=false and no fabricated arguments.
+func (c *partialCall) toolCall(protocol string, complete bool) ToolCall {
 	args := c.args
-	if len(args) == 0 {
+	if complete && len(args) == 0 {
 		args = []byte("{}")
 	}
 	return ToolCall{
@@ -82,7 +84,7 @@ func (c *partialCall) toolCall(protocol string) ToolCall {
 		ToolCallID: c.id,
 		ToolName:   c.name,
 		Arguments:  append([]byte(nil), args...),
-		Complete:   true,
+		Complete:   complete,
 		Truncated:  c.trunc,
 	}
 }

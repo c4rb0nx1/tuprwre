@@ -32,14 +32,15 @@ func (a *anthropicStream) Write(p []byte) (int, error) {
 func (a *anthropicStream) Finish() {
 	a.sc.finish()
 	// Flush any tool_use blocks that never received a content_block_stop,
-	// in index order for determinism.
+	// in index order for determinism. These are incomplete: the stream ended
+	// (or the client disconnected) before the terminating event arrived.
 	idxs := make([]int, 0, len(a.blocks))
 	for idx := range a.blocks {
 		idxs = append(idxs, idx)
 	}
 	sort.Ints(idxs)
 	for _, idx := range idxs {
-		a.flush(idx)
+		a.flush(idx, false)
 	}
 }
 
@@ -91,19 +92,21 @@ func (a *anthropicStream) onEvent(event, data string) {
 			return
 		}
 		if a.blocks[ev.Index] != nil {
-			a.flush(ev.Index)
+			a.flush(ev.Index, true)
 		}
 	}
 }
 
-func (a *anthropicStream) flush(idx int) {
+// flush emits the block at idx. complete is true only when the caller saw
+// content_block_stop for the block.
+func (a *anthropicStream) flush(idx int, complete bool) {
 	c := a.blocks[idx]
 	if c == nil {
 		return
 	}
 	delete(a.blocks, idx)
 	if a.emit != nil {
-		a.emit(c.toolCall(ProtocolAnthropic))
+		a.emit(c.toolCall(ProtocolAnthropic, complete))
 	}
 }
 

@@ -7,7 +7,10 @@
 // input; JSON parse failures are counted and ignored.
 package wire
 
-import "io"
+import (
+	"io"
+	"strings"
+)
 
 // MaxArgumentsBytes caps the per-call arguments buffer. Calls whose arguments
 // exceed the cap are clipped and reported as truncated so that the extractor's
@@ -101,21 +104,20 @@ func NewRequestExtractor(path string, emit EmitToolResult) Extractor {
 // protocolForPath maps a request path to a wire protocol.
 func protocolForPath(path string) string {
 	switch {
-	case hasPath(path, "/v1/messages"):
+	case hasPath(path, "v1/messages"):
 		return ProtocolAnthropic
-	case hasPath(path, "/v1/responses"):
+	case hasPath(path, "v1/responses"):
 		return ProtocolOpenAIResponses
-	case hasPath(path, "/v1/chat/completions"):
+	case hasPath(path, "v1/chat/completions"):
 		return ProtocolOpenAIChat
 	}
 	return ""
 }
 
-// hasPath reports whether p equals suffix or ends with suffix, tolerating an
-// upstream base path prefix (e.g. "/proxy/v1/messages").
-func hasPath(p, suffix string) bool {
-	if len(p) < len(suffix) {
-		return false
-	}
-	return p[len(p)-len(suffix):] == suffix
+// hasPath reports whether p is exactly endpoint or ends with "/"+endpoint,
+// matching on segment boundaries. This tolerates an upstream base path prefix
+// (e.g. "/proxy/v1/messages") while rejecting paths that merely share a suffix
+// (e.g. "/x/v1/messagesfoo"). endpoint is given without a leading slash.
+func hasPath(p, endpoint string) bool {
+	return p == endpoint || strings.HasSuffix(p, "/"+endpoint)
 }
