@@ -15,6 +15,18 @@ the Anthropic Messages, OpenAI Responses, or OpenAI Chat Completions wire protoc
 — selected by request path (`/v1/messages`, `/v1/responses`,
 `/v1/chat/completions`). It does not care which harness produced the traffic.
 
+The gateway is one of three record-layer pieces. Together they reconcile
+*intent* with *effects*:
+
+| Piece | Records | Docs |
+|---|---|---|
+| `tprsh-gateway` | tool-call intent and tool results, from the LLM wire | this page |
+| `tprsh-sensor` | host effects (exec, file, network, exit), from an OS sensor such as Tetragon | [`sensor.md`](sensor.md) |
+| `tprsh-report` | per-session reconciliation, covert-action candidates, would-be green/yellow/red tiers | [`report.md`](report.md) |
+
+Give the gateway and the sensor the same `--session-id` so the report can pair
+their logs.
+
 ## Run it
 
 ```bash
@@ -119,17 +131,20 @@ secrets that do not match a known shape (arbitrary tokens, novel providers,
 values split across JSON fields). Treat the log as sensitive regardless. Residual
 notes: values redacted by regex are re-marshalled with `encoding/json`, which
 HTML-escapes `<`, `>`, and `&` across the recorded payload; large integers are
-preserved via `json.Number`. Use `--no-redact` only with throwaway credentials.
+preserved via `json.Number`. Use `--no-redact` only with throwaway credentials. The same default redactor
+also covers effect-event argv recorded by `tprsh-sensor` (see
+[`sensor.md`](sensor.md#redaction)).
 
 ## Known limitations
 
 - **Subscription / OAuth auth is untested.** Only plain API-key forwarding has
   been exercised end-to-end; interactive OAuth flows that rely on device
   callbacks or refresh round-trips are not validated.
-- **The gateway sees intent, not effects.** It cannot confirm that a tool
-  actually ran, or what it touched on the host. The effect side (the `Sensor`
-  interface, the effect event schema and its contract) is described in
-  [`sensor.md`](sensor.md). No live OS adapter has landed yet.
+- **The gateway sees intent, not effects.** On its own it cannot confirm that
+  a tool actually ran, or what it touched on the host. Pair it with
+  `tprsh-sensor` ([`sensor.md`](sensor.md)) and reconcile the two logs with
+  `tprsh-report` ([`report.md`](report.md)). The Tetragon adapter is tested
+  against synthetic fixtures only; it has not been run against a live agent.
 - **No dedup across gateway restarts.** Result dedup is per-process only, so a
   restart mid-conversation can re-record historical tool results.
 - Encodings other than `identity`/gzip are forwarded but not parsed (no events

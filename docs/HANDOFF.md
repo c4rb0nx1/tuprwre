@@ -2,7 +2,8 @@
 
 State as of 2026-09-25. This document is the starting point for a fresh agent
 session (including a cloud session with no local continuity). Read
-`docs/gateway.md` and `CLAUDE.md` alongside it.
+`CLAUDE.md`, `docs/gateway.md`, `docs/sensor.md` and `docs/report.md`
+alongside it.
 
 ## Problem statement
 
@@ -64,12 +65,23 @@ Verified via `git log` on `feat/tprsh-gateway`:
 - `a9f6c61` — `tprsh-gateway` binary and e2e smoke test.
 - `12ad852` — default log path, e2e strictness, docs.
 
-- Task 1 (this branch): `internal/sensor` — `Sensor` interface, `Record`
-  (validate + default-on redaction + `Stats`), `Validate` contract, `Replay`
-  reference sensor; effect payloads (`sensor`, `process`, `file`, `net`,
-  `exit`) added to `event.Event`; argv redaction in `DefaultRedactor`;
-  synthetic contract fixtures in `internal/sensor/testdata/contract/`. See
-  `docs/sensor.md`.
+Cloud session (all four handoff tasks):
+
+- `1633dca`: `internal/sensor` — `Sensor` interface, `Record` (validate +
+  default-on redaction + `Stats`), `Validate` contract, `Replay` reference
+  sensor. Effect payloads (`sensor`, `process`, `file`, `net`, `exit`) added
+  to `event.Event`; schema stays `"0"`. Argv redaction in `DefaultRedactor`.
+  Synthetic contract fixtures.
+- `01b2443`: `internal/sensor/tetragon` adapter, `sensor.IsSensitivePath`,
+  and the `cmd/tprsh-sensor` binary. Tested against a synthetic export with
+  a golden output; **not verified against a live Tetragon agent**. Also an
+  illustrative, unverified TracingPolicy (`docs/tetragon/tprsh-effects.yaml`).
+- `95fc84e`: `internal/rules` (fixed rule set + shell lexer), `internal/report`
+  and `cmd/tprsh-report`. Links effects to tool calls, lists covert
+  candidates, and gives would-be tiers. Also `scripts/report-e2e.sh`
+  (fixture-driven, no live sensor).
+- Docs: `docs/sensor.md`, `docs/report.md`; `docs/gateway.md` describes the
+  three-piece pipeline.
 
 Capabilities landed: record-only gateway; three wire extractors; request-side
 `tool_result` extraction with dedup; async sink with `Stats`; drain-safe bounded
@@ -80,30 +92,35 @@ Three independent reviews; last verdict: **no P0/P1**.
 Residuals: redaction is pattern-based; re-marshal HTML-escapes `<`/`>`/`&`; no
 dedup across restarts; an explicit `--log` parent dir is not chmod'ed.
 
-## Next tasks for the cloud session (in order)
+## Next tasks
 
-1. ~~**Sensor interface + effect event kinds + contract fixtures**~~ — done,
-   see `docs/sensor.md`.
-2. **Tetragon adapter** driven by recorded fixture events. Live eBPF is likely
-   unavailable in cloud VMs — do **not** claim live verification. Implement
-   `sensor.Sensor` and test against the contract (`sensor.Validate`, fixtures
-   in `internal/sensor/testdata/contract/`). Watch out: Tetragon's
-   `process.arguments` is one space-joined string, so rebuilding `argv` from
-   it is lossy for arguments that contain spaces.
-3. **`cmd/tprsh-report`** — read gateway + sensor JSONL, group by session, list
-   tool intents, effects, and unmatched effects (covert candidates), plus
-   would-be green/yellow/red using a small fixed rule set for irreversible
-   actions:
-   - `terraform`/`tofu apply|destroy`
-   - `kubectl delete/apply` on prod contexts
-   - `git push --force` to protected branches
-   - `rm` outside the workspace
-   - reading credential files then network egress
-4. **Keep `docs/gateway.md` current.**
+The four original cloud tasks are done (see above and `docs/sensor.md`,
+`docs/report.md`). Candidates for the next session, roughly in order:
+
+1. **Live Tetragon verification** on a Linux host with eBPF. Record a real
+   export, compare it with the synthetic fixture shape, and fix the mapping.
+   Open questions: does `process.arguments` quote arguments that contain
+   spaces? Does `process_exit.status` hold the exit code or the raw wait
+   status? Do the example policy's `Postfix`/`Equal` selectors behave as
+   written? Commit a *redacted* real sample as a new fixture.
+2. **Session attribution by process tree** in `tprsh-sensor` (e.g. a
+   `--root-pid` or cgroup filter), so one host-wide Tetragon stream can be
+   split across several agents instead of stamping one `--session-id`.
+3. **Report precision**: per-process (not session-wide) credential taint; an
+   allowlist for harness self-writes (state/cache dirs); configurable
+   protected branches, prod-context pattern and workspace per session.
+4. **Dedup across gateway restarts**; chmod of an explicit `--log` parent
+   (gateway residuals above).
+
+Scripts:
+
+- `scripts/gateway-e2e.sh` needs the `pi` CLI. Cloud runs used `ALLOW_FAKE=1`.
+- `scripts/report-e2e.sh` is fixture-only and needs just Go and `python3`.
 
 Local-only (not cloud):
 
-- `eslogger` adapter (needs macOS root + Full Disk Access).
+- `eslogger` adapter (needs macOS root + Full Disk Access). Implement
+  `sensor.Sensor` and satisfy `sensor.Validate`.
 - Dogfooding with real keys.
 - Subscription-auth test.
 

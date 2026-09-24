@@ -112,8 +112,9 @@ fields:
 
 For effect events, `time` is when the sensor observed the effect.
 `session_id` is optional: a sensor usually cannot tell which harness session
-caused an effect, so linking effects to sessions is left to the consumer (for
-example by process tree).
+caused an effect. `tprsh-sensor --session-id` stamps one id on a whole stream,
+and `tprsh-report` ([`report.md`](report.md)) pairs it with the gateway log
+that has the same id.
 
 A sample `exec` record:
 
