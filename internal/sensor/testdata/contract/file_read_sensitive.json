@@ -1,0 +1,1 @@
+{"version":"0","id":"fx-frs-1","time":"2026-09-20T10:00:03Z","session_id":"sess-fixture-1","source":"sensor","kind":"file_read_sensitive","sensor":"fixture","process":{"exec_id":"fx:2003","pid":2003,"uid":1000},"file":{"path":"/home/agent/.aws/credentials"}}

@@ -229,3 +229,54 @@ func TestDefaultRedactorQuotedAssignmentWithSpaces(t *testing.T) {
 		t.Errorf("unexpected rewrite: %q", got)
 	}
 }
+
+// TestDefaultRedactorEffectArgv proves effect argv is redacted by default,
+// including a credential passed as the argument after a bare flag, and that
+// the caller's Process is not mutated.
+func TestDefaultRedactorEffectArgv(t *testing.T) {
+	argv := []string{
+		"curl", "-H", "Authorization: Bearer fake-token-abc123",
+		"--password", "fake-hunter2",
+		"--token=fake-tok-1",
+		"--verbose", "https://example.com",
+	}
+	orig := append([]string(nil), argv...)
+	proc := &event.Process{PID: 42, Binary: "/usr/bin/curl", Argv: argv}
+	e := event.New(event.SourceSensor, event.KindExec, time.Now())
+	e.Process = proc
+
+	got := DefaultRedactor(e)
+
+	want := []string{
+		"curl", "-H", "Authorization: Bearer [REDACTED:bearer]",
+		"--password", "[REDACTED:credential]",
+		"--token=[REDACTED:credential]",
+		"--verbose", "https://example.com",
+	}
+	if strings.Join(got.Process.Argv, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("argv = %q, want %q", got.Process.Argv, want)
+	}
+	if !got.Redacted || got.RedactionCount != 3 {
+		t.Errorf("redacted=%v count=%d, want true 3", got.Redacted, got.RedactionCount)
+	}
+	if got.Process == proc {
+		t.Error("redactor reused the caller's Process pointer")
+	}
+	if strings.Join(proc.Argv, "\x00") != strings.Join(orig, "\x00") {
+		t.Errorf("caller argv mutated: %q", proc.Argv)
+	}
+}
+
+// TestDefaultRedactorEffectArgvCleanUnchanged proves clean argv keeps its
+// Process pointer and is not flagged; a flag followed by another flag is not
+// treated as carrying a value.
+func TestDefaultRedactorEffectArgvCleanUnchanged(t *testing.T) {
+	proc := &event.Process{PID: 7, Argv: []string{"git", "push", "--token", "--force", "origin", "main"}}
+	e := event.New(event.SourceSensor, event.KindExec, time.Now())
+	e.Process = proc
+
+	got := DefaultRedactor(e)
+	if got.Process != proc || got.Redacted || got.RedactionCount != 0 {
+		t.Errorf("clean argv changed: %+v redacted=%v", got.Process, got.Redacted)
+	}
+}

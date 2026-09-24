@@ -62,12 +62,21 @@ var sensitiveKeyWords = []string{
 	"authorization", "credential", "access_key", "private_key",
 }
 
-// DefaultRedactor replaces secret-looking substrings in an event's Arguments
-// and Result with "[REDACTED:<kind>]" markers. JSON payloads stay valid JSON:
-// only string values are rewritten, never structure. Payloads that are not
-// valid JSON are left untouched.
+// DefaultRedactor replaces secret-looking substrings in an event's Arguments,
+// Result and effect Process.Argv with "[REDACTED:<kind>]" markers. JSON
+// payloads stay valid JSON: only string values are rewritten, never structure.
+// Payloads that are not valid JSON are left untouched. The input event's
+// Process is never mutated; a redacted copy replaces it.
 func DefaultRedactor(e event.Event) event.Event {
 	count := 0
+	if e.Process != nil && len(e.Process.Argv) > 0 {
+		if argv, n := redactArgv(e.Process.Argv); n > 0 {
+			p := *e.Process
+			p.Argv = argv
+			e.Process = &p
+			count += n
+		}
+	}
 	if len(e.Arguments) > 0 {
 		if out, n := redactJSON(e.Arguments); n > 0 {
 			e.Arguments = out
@@ -85,6 +94,39 @@ func DefaultRedactor(e event.Event) event.Event {
 		e.RedactionCount += count
 	}
 	return e
+}
+
+// redactArgv redacts each argument string and, additionally, replaces the
+// value that follows a credential-naming flag given as a separate argument
+// (e.g. "--password", "hunter2"). It returns a fresh slice and the number of
+// replacements, or the input and 0 when nothing matched.
+func redactArgv(argv []string) ([]string, int) {
+	out := make([]string, len(argv))
+	count := 0
+	for i, arg := range argv {
+		if i > 0 && isCredentialFlag(argv[i-1]) && !strings.HasPrefix(arg, "-") {
+			out[i] = "[REDACTED:credential]"
+			count++
+			continue
+		}
+		red, n := redactString(arg)
+		out[i] = red
+		count += n
+	}
+	if count == 0 {
+		return argv, 0
+	}
+	return out, count
+}
+
+// isCredentialFlag reports whether arg is a bare flag (no "=value") whose name
+// marks its next argument as a credential, e.g. "--token" or "-password".
+func isCredentialFlag(arg string) bool {
+	if !strings.HasPrefix(arg, "-") || strings.Contains(arg, "=") {
+		return false
+	}
+	name := strings.ReplaceAll(strings.TrimLeft(arg, "-"), "-", "_")
+	return name != "" && isSensitiveKey(name)
 }
 
 // redactJSON walks a JSON payload and redacts secrets within its string values.

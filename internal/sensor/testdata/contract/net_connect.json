@@ -1,0 +1,1 @@
+{"version":"0","id":"fx-net-1","time":"2026-09-20T10:00:04Z","session_id":"sess-fixture-1","source":"sensor","kind":"net_connect","sensor":"fixture","process":{"exec_id":"fx:2003","pid":2003,"uid":1000},"net":{"protocol":"tcp","src_addr":"10.0.0.5","src_port":51544,"dst_addr":"203.0.113.10","dst_port":443}}

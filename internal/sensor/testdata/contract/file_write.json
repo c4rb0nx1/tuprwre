@@ -1,0 +1,1 @@
+{"version":"0","id":"fx-fw-1","time":"2026-09-20T10:00:02Z","session_id":"sess-fixture-1","source":"sensor","kind":"file_write","sensor":"fixture","process":{"exec_id":"fx:2002","pid":2002,"uid":1000},"file":{"path":"/home/agent/work/main.go"}}

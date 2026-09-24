@@ -64,6 +64,13 @@ Verified via `git log` on `feat/tprsh-gateway`:
 - `a9f6c61` — `tprsh-gateway` binary and e2e smoke test.
 - `12ad852` — default log path, e2e strictness, docs.
 
+- Task 1 (this branch): `internal/sensor` — `Sensor` interface, `Record`
+  (validate + default-on redaction + `Stats`), `Validate` contract, `Replay`
+  reference sensor; effect payloads (`sensor`, `process`, `file`, `net`,
+  `exit`) added to `event.Event`; argv redaction in `DefaultRedactor`;
+  synthetic contract fixtures in `internal/sensor/testdata/contract/`. See
+  `docs/sensor.md`.
+
 Capabilities landed: record-only gateway; three wire extractors; request-side
 `tool_result` extraction with dedup; async sink with `Stats`; drain-safe bounded
 `Close`; default-on pattern redaction; `cmd/tprsh-gateway` binary; real-pi e2e.
@@ -75,10 +82,14 @@ dedup across restarts; an explicit `--log` parent dir is not chmod'ed.
 
 ## Next tasks for the cloud session (in order)
 
-1. **Sensor interface + effect event kinds + contract fixtures** (recorded JSON
-   samples) in a new package.
+1. ~~**Sensor interface + effect event kinds + contract fixtures**~~ — done,
+   see `docs/sensor.md`.
 2. **Tetragon adapter** driven by recorded fixture events. Live eBPF is likely
-   unavailable in cloud VMs — do **not** claim live verification.
+   unavailable in cloud VMs — do **not** claim live verification. Implement
+   `sensor.Sensor` and test against the contract (`sensor.Validate`, fixtures
+   in `internal/sensor/testdata/contract/`). Watch out: Tetragon's
+   `process.arguments` is one space-joined string, so rebuilding `argv` from
+   it is lossy for arguments that contain spaces.
 3. **`cmd/tprsh-report`** — read gateway + sensor JSONL, group by session, list
    tool intents, effects, and unmatched effects (covert candidates), plus
    would-be green/yellow/red using a small fixed rule set for irreversible

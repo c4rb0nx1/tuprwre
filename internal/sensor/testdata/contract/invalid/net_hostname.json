@@ -1,0 +1,1 @@
+{"version":"0","id":"bad-7","time":"2026-09-20T10:00:00Z","source":"sensor","kind":"net_connect","sensor":"fixture","process":{"pid":1},"net":{"protocol":"tcp","dst_addr":"example.com","dst_port":443}}

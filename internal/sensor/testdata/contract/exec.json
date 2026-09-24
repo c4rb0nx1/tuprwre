@@ -1,0 +1,1 @@
+{"version":"0","id":"fx-exec-1","time":"2026-09-20T10:00:01.5Z","session_id":"sess-fixture-1","source":"sensor","kind":"exec","sensor":"fixture","process":{"exec_id":"fx:2001","parent_exec_id":"fx:2000","pid":2001,"ppid":2000,"uid":1000,"binary":"/usr/bin/git","argv":["git","push","--force","origin","main"],"cwd":"/home/agent/work"}}

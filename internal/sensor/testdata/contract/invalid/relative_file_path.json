@@ -1,0 +1,1 @@
+{"version":"0","id":"bad-6","time":"2026-09-20T10:00:00Z","source":"sensor","kind":"file_write","sensor":"fixture","process":{"pid":1},"file":{"path":"work/main.go"}}

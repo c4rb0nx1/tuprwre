@@ -1,0 +1,1 @@
+{"version":"0","id":"bad-11","time":"2026-09-20T10:00:00Z","source":"sensor","kind":"exec","sensor":"fixture","tool_name":"Bash","process":{"pid":1,"binary":"/bin/true"}}

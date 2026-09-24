@@ -126,9 +126,10 @@ preserved via `json.Number`. Use `--no-redact` only with throwaway credentials.
 - **Subscription / OAuth auth is untested.** Only plain API-key forwarding has
   been exercised end-to-end; interactive OAuth flows that rely on device
   callbacks or refresh round-trips are not validated.
-- **No OS-effect sensor yet.** The gateway observes *intent* and *results* on the
-  wire. It cannot confirm that a tool actually ran, or what it touched on the
-  host — file writes, process spawns, and network connections are not sensed.
+- **The gateway sees intent, not effects.** It cannot confirm that a tool
+  actually ran, or what it touched on the host. The effect side (the `Sensor`
+  interface, the effect event schema and its contract) is described in
+  [`sensor.md`](sensor.md). No live OS adapter has landed yet.
 - **No dedup across gateway restarts.** Result dedup is per-process only, so a
   restart mid-conversation can re-record historical tool results.
 - Encodings other than `identity`/gzip are forwarded but not parsed (no events

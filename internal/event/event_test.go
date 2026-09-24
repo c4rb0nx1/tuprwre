@@ -78,8 +78,8 @@ func TestOmittedFieldsAbsentFromJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, field := range []string{"tool_name", "arguments", "protocol", "result", "truncated", "complete"} {
-		if contains(string(raw), field) {
+	for _, field := range []string{"tool_name", "arguments", "protocol", "result", "truncated", "complete", "sensor", "process", "file", "net", "exit"} {
+		if contains(string(raw), `"`+field+`":`) {
 			t.Errorf("expected %q to be omitted, JSON = %s", field, raw)
 		}
 	}

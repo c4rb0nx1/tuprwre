@@ -102,6 +102,24 @@ type Event struct {
 	// IsError reports that the tool result was flagged as an error.
 	IsError bool `json:"is_error,omitempty"`
 
+	// --- Effect fields (Source == SourceSensor) ---
+
+	// Sensor names the adapter that observed an effect, e.g. "tetragon" or
+	// "eslogger". It identifies the producer only; no consumer may depend on
+	// the adapter's native record format.
+	Sensor string `json:"sensor,omitempty"`
+	// Process is the OS process that caused an effect. It is set on every
+	// effect Kind (exec, file_write, file_read_sensitive, net_connect,
+	// proc_exit).
+	Process *Process `json:"process,omitempty"`
+	// File is the file an effect touched. Set for file_write and
+	// file_read_sensitive only.
+	File *File `json:"file,omitempty"`
+	// Net is the connection an effect opened. Set for net_connect only.
+	Net *Net `json:"net,omitempty"`
+	// Exit is the termination status of a process. Set for proc_exit only.
+	Exit *Exit `json:"exit,omitempty"`
+
 	// --- Redaction fields ---
 
 	// Redacted reports that the redactor replaced at least one secret-looking
@@ -110,6 +128,59 @@ type Event struct {
 	// RedactionCount is the number of individual replacements the redactor
 	// made in Arguments and Result.
 	RedactionCount int `json:"redaction_count,omitempty"`
+}
+
+// Process describes the OS process behind an effect event. For effect events
+// the enclosing Event.Time is the time the sensor observed the effect, not the
+// time the record was written.
+type Process struct {
+	// ExecID is a sensor-assigned identity for one execution. Unlike PID it
+	// is not reused, so it is the key for building a process tree.
+	ExecID string `json:"exec_id,omitempty"`
+	// ParentExecID is the ExecID of the parent execution, when known.
+	ParentExecID string `json:"parent_exec_id,omitempty"`
+	// PID is the kernel process id.
+	PID int `json:"pid"`
+	// PPID is the parent's kernel process id, when known.
+	PPID int `json:"ppid,omitempty"`
+	// UID is the real user id. It is a pointer so that root (0) stays
+	// distinguishable from unknown.
+	UID *uint32 `json:"uid,omitempty"`
+	// Binary is the absolute path of the executed image.
+	Binary string `json:"binary,omitempty"`
+	// Argv is the argument vector as passed to execve, including argv[0].
+	Argv []string `json:"argv,omitempty"`
+	// Cwd is the working directory at exec time, when known.
+	Cwd string `json:"cwd,omitempty"`
+}
+
+// File describes the file touched by a file effect.
+type File struct {
+	// Path is the absolute path as resolved by the sensor.
+	Path string `json:"path"`
+}
+
+// Net describes an outbound connection.
+type Net struct {
+	// Protocol is the transport, "tcp" or "udp".
+	Protocol string `json:"protocol"`
+	// SrcAddr and SrcPort are the local endpoint, when known.
+	SrcAddr string `json:"src_addr,omitempty"`
+	SrcPort int    `json:"src_port,omitempty"`
+	// DstAddr is the remote IP address in textual form.
+	DstAddr string `json:"dst_addr"`
+	// DstPort is the remote port.
+	DstPort int `json:"dst_port"`
+}
+
+// Exit describes how a process terminated. At least one of Code and Signal is
+// set.
+type Exit struct {
+	// Code is the exit status of a normal exit. It is a pointer so that a
+	// successful exit (0) stays distinguishable from a signal death.
+	Code *int `json:"code,omitempty"`
+	// Signal names the terminating signal, e.g. "SIGKILL".
+	Signal string `json:"signal,omitempty"`
 }
 
 // MarshalJSON serializes the event. The "complete" field is meaningful only

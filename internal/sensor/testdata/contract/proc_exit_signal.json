@@ -1,0 +1,1 @@
+{"version":"0","id":"fx-exit-2","time":"2026-09-20T10:00:06Z","source":"sensor","kind":"proc_exit","sensor":"fixture","process":{"pid":2004,"uid":0},"exit":{"signal":"SIGKILL"}}

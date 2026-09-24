@@ -1,0 +1,1 @@
+{"version":"0","id":"bad-10","time":"2026-09-20T10:00:00Z","source":"sensor","kind":"exec","sensor":"fixture","process":{"pid":1,"binary":"/bin/true"},"file":{"path":"/etc/passwd"}}
