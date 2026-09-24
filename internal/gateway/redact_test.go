@@ -280,3 +280,16 @@ func TestDefaultRedactorEffectArgvCleanUnchanged(t *testing.T) {
 		t.Errorf("clean argv changed: %+v redacted=%v", got.Process, got.Redacted)
 	}
 }
+
+// TestDefaultRedactorEffectArgvSplitScheme proves a bearer token split into
+// its own argument (as sensors that join-then-split arguments produce) is
+// still redacted.
+func TestDefaultRedactorEffectArgvSplitScheme(t *testing.T) {
+	e := event.New(event.SourceSensor, event.KindExec, time.Now())
+	e.Process = &event.Process{PID: 3, Argv: []string{"curl", "-H", "Authorization:", "Bearer", "fake-token-xyz", "https://example.com"}}
+
+	got := DefaultRedactor(e)
+	if got.Process.Argv[4] != "[REDACTED:bearer]" || got.RedactionCount != 1 {
+		t.Errorf("argv = %q count = %d", got.Process.Argv, got.RedactionCount)
+	}
+}

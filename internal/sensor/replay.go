@@ -45,7 +45,7 @@ func (p *Replay) Run(ctx context.Context, out gateway.Sink) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		line, tooLong, err := readLine(br, MaxReplayLineBytes)
+		line, tooLong, err := ReadLine(br, MaxReplayLineBytes)
 		if tooLong {
 			p.errors.Add(1)
 		} else if len(bytes.TrimSpace(line)) > 0 {
@@ -65,10 +65,11 @@ func (p *Replay) Run(ctx context.Context, out gateway.Sink) error {
 	}
 }
 
-// readLine returns the next line without its terminator. When the line
-// exceeds limit it is consumed and discarded, and tooLong is set. err is
-// io.EOF after the final line.
-func readLine(br *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+// ReadLine returns the next line from br without its terminator, for
+// adapters that read line-delimited native records. When the line exceeds
+// limit bytes it is consumed and discarded, and tooLong is set, so memory
+// stays bounded. err is io.EOF after the final line.
+func ReadLine(br *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
 	var buf []byte
 	for {
 		chunk, rerr := br.ReadSlice('\n')

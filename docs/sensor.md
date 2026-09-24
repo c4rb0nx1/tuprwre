@@ -19,14 +19,82 @@ Sensors only observe. They never block, confine, or change what they see.
 | `Validate` | The effect-event contract (below). |
 | `Replay` | Reference `Sensor` that re-emits events already in the tprsh schema from JSONL. Used for fixtures and recorded logs. |
 | `EffectKinds`, `IsEffect` | The effect kinds a sensor may emit. |
+| `IsSensitivePath` | Fixed, lexical list of credential locations (cloud/cluster configs, SSH private keys, token stores, `.env`, `*.key`). Used by adapters to classify reads, and by `tprsh-report`. |
+| `ReadLine` | Bounded line reader shared by line-delimited adapters. |
 
-Adapters for Tetragon (Linux) and eslogger (macOS) will wrap each tool's native
-output. **The adapter is the only code that knows a tool's native format.**
+Adapters wrap each tool's native output. Tetragon (Linux) is implemented
+(below); eslogger (macOS) is planned.
+
+**The adapter is the only code that knows a tool's native format.**
 Downstream code sees only `event.Event`.
 
 `Run` contract: it returns `nil` when the source is exhausted and `ctx.Err()`
 when cancelled. Malformed native records are counted and skipped, never
 returned as an error. `Run` fails only when the source itself cannot be read.
+
+## Tetragon adapter (Linux)
+
+`internal/sensor/tetragon` reads Tetragon's JSON event export: one
+`GetEventsResponse` per line, from `tetra getevents -o json` or from the
+agent's export file.
+
+| Tetragon record | Effect kind |
+|---|---|
+| `process_exec` | `exec` (skipped when flagged `procFS`, i.e. the process already existed when Tetragon started) |
+| `process_exit` | `proc_exit`: `signal` if set, otherwise `code` from `status` (a missing `status` means 0) |
+| `process_kprobe` on a `*connect*` hook with `sock_arg` / `sockaddr_arg` | `net_connect` (`IPPROTO_TCP`/`IPPROTO_UDP`, or inferred from the hook name) |
+| `process_kprobe` `security_file_permission` with mask `MAY_WRITE`, or `security_path_truncate` | `file_write` |
+| `process_kprobe` `security_file_permission` with mask `MAY_READ`, `security_file_open`, or `fd_install`, on a path `sensor.IsSensitivePath` accepts | `file_read_sensitive` |
+
+Every other record is counted as ignored. This includes `process_loader`, any
+other hook, and reads of files that aren't sensitive. A record that can't be
+translated is counted as an error, never emitted: bad JSON, no time, no pid, no
+path, no address, or an unknown protocol.
+
+Event IDs are derived from a hash of the native line, so reading the same
+export twice produces the same IDs. Consumers can deduplicate on `id`.
+
+**argv is lossy.** Tetragon reports arguments as one space-joined string, so
+the adapter splits it on whitespace. An argument that contained spaces becomes
+several entries, and `argv[0]` is the binary path. Redaction compensates for
+one case: a token split off from its `Bearer`/`Basic` scheme is still redacted.
+
+**Not verified live.** The mapping follows Tetragon's documented export format,
+and all tests use a synthetic fixture:
+`internal/sensor/tetragon/testdata/session.jsonl`, whose normalized, redacted
+output is pinned in `session.expected.jsonl` (regenerate with
+`go test ./internal/sensor/tetragon -update`). No live eBPF run backs it.
+
+[`docs/tetragon/tprsh-effects.yaml`](tetragon/tprsh-effects.yaml) is an
+example TracingPolicy (observe-only) that produces the kprobe events above. It
+is also unverified.
+
+### Running it: `tprsh-sensor`
+
+```bash
+go build -o tprsh-sensor ./cmd/tprsh-sensor
+
+# Pair with the gateway by giving both the same session id.
+tetra getevents -o json | tprsh-sensor tetragon --session-id "$SID"
+
+# Or translate an export file after the fact.
+tprsh-sensor tetragon --input /var/run/cilium/tetragon/tetragon.log --session-id "$SID" --log effects.jsonl
+```
+
+| Flag | Meaning |
+|---|---|
+| `--input PATH` | Native stream; `-` (default) is stdin. To follow a growing file, pipe `tail -F`. |
+| `--log PATH` | JSONL effect log, created `0600`. Default: `$XDG_STATE_HOME/tprsh/sensor/<session-id>.jsonl`. |
+| `--session-id ID` | Stamped on every event. Default: random. |
+| `--no-redact` | Record raw argv. Prints a warning. |
+
+The stream is attributed to one session as a whole. On a host running several
+agents, give each its own Tetragon filter, for example by namespace or process
+tree, or leave effects unattributed. Splitting sessions by process tree is not
+implemented yet.
+
+On shutdown, `tprsh-sensor` prints a stats line to stderr: `emitted`,
+`invalid`, `sink_errors`, `native_errors`, `ignored`.
 
 ## Effect event schema
 
@@ -93,7 +161,8 @@ fixtures in this form.
 `Record` applies `gateway.DefaultRedactor` unless `Options.DisableRedaction` is
 set. For effect events it redacts each `process.argv` string using the same
 patterns as the gateway. It also replaces the argument after a bare
-credential-naming flag, as in `--password hunter2` or `--token X`.
+credential-naming flag, as in `--password hunter2` or `--token X`, and the
+argument after a bare `Bearer`/`Basic` scheme.
 
 It does not redact `cwd`, `file.path`, or `binary`. Like all tprsh redaction,
 it is pattern-based and best-effort. Short flags such as `mysql -pSECRET` are

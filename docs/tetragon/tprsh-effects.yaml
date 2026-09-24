@@ -1,0 +1,72 @@
+# Example Tetragon TracingPolicy producing the kprobe events the tprsh
+# Tetragon adapter maps (internal/sensor/tetragon). Process exec/exit events
+# are emitted by Tetragon without any policy.
+#
+# ILLUSTRATIVE ONLY: written against Tetragon's documented policy format and
+# NOT verified against a live Tetragon agent. Review the path lists for your
+# hosts before use. This policy only observes (no Sigkill/Override actions);
+# tprsh is a record layer, not a sandbox.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: tprsh-effects
+spec:
+  kprobes:
+  # Outbound TCP connections -> net_connect.
+  - call: "tcp_connect"
+    syscall: false
+    args:
+    - index: 0
+      type: "sock"
+  # File access -> file_write (mask 2 = MAY_WRITE) and, for credential
+  # paths, file_read_sensitive (mask 4 = MAY_READ). Selectors are OR'ed;
+  # matchArgs within one selector are AND'ed.
+  - call: "security_file_permission"
+    syscall: false
+    args:
+    - index: 0
+      type: "file"
+    - index: 1
+      type: "int"
+    selectors:
+    - matchArgs:
+      - index: 0
+        operator: "Prefix"
+        values:
+        - "/home/"
+        - "/root/"
+        - "/etc/"
+        - "/var/lib/"
+        - "/srv/"
+      - index: 1
+        operator: "Equal"
+        values:
+        - "2"
+    - matchArgs:
+      - index: 0
+        operator: "Postfix"
+        values:
+        - "/.aws/credentials"
+        - "/.aws/config"
+        - "/.kube/config"
+        - "/.docker/config.json"
+        - "/.netrc"
+        - "/.git-credentials"
+        - "/.pgpass"
+        - "/.npmrc"
+        - "/.pypirc"
+        - "/.ssh/id_rsa"
+        - "/.ssh/id_ed25519"
+        - "/.ssh/id_ecdsa"
+        - "/etc/shadow"
+        - "/.env"
+      - index: 1
+        operator: "Equal"
+        values:
+        - "4"
+  # Truncation -> file_write.
+  - call: "security_path_truncate"
+    syscall: false
+    args:
+    - index: 0
+      type: "path"

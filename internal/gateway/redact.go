@@ -98,16 +98,24 @@ func DefaultRedactor(e event.Event) event.Event {
 
 // redactArgv redacts each argument string and, additionally, replaces the
 // value that follows a credential-naming flag given as a separate argument
-// (e.g. "--password", "hunter2"). It returns a fresh slice and the number of
-// replacements, or the input and 0 when nothing matched.
+// (e.g. "--password", "hunter2") or an HTTP auth scheme that a sensor split
+// off its token (e.g. "Bearer", "tok"). It returns a fresh slice and the
+// number of replacements, or the input and 0 when nothing matched.
 func redactArgv(argv []string) ([]string, int) {
 	out := make([]string, len(argv))
 	count := 0
 	for i, arg := range argv {
-		if i > 0 && isCredentialFlag(argv[i-1]) && !strings.HasPrefix(arg, "-") {
-			out[i] = "[REDACTED:credential]"
-			count++
-			continue
+		if i > 0 && !strings.HasPrefix(arg, "-") {
+			if isCredentialFlag(argv[i-1]) {
+				out[i] = "[REDACTED:credential]"
+				count++
+				continue
+			}
+			if isAuthScheme(argv[i-1]) {
+				out[i] = "[REDACTED:" + strings.ToLower(argv[i-1]) + "]"
+				count++
+				continue
+			}
 		}
 		red, n := redactString(arg)
 		out[i] = red
@@ -127,6 +135,12 @@ func isCredentialFlag(arg string) bool {
 	}
 	name := strings.ReplaceAll(strings.TrimLeft(arg, "-"), "-", "_")
 	return name != "" && isSensitiveKey(name)
+}
+
+// isAuthScheme reports whether arg is exactly an HTTP auth scheme whose
+// credential follows as the next argument.
+func isAuthScheme(arg string) bool {
+	return strings.EqualFold(arg, "Bearer") || strings.EqualFold(arg, "Basic")
 }
 
 // redactJSON walks a JSON payload and redacts secrets within its string values.
