@@ -1,0 +1,2 @@
+harness_mode=pi
+{"events": 2, "intents": 1, "results": 1, "tool_call_id": "call_e2e_1", "stats": {"EventsEmitted": 2, "EventsDropped": 0, "SinkErrors": 0, "ExtractorErrors": 0}}

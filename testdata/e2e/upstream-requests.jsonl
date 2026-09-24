@@ -1,0 +1,2 @@
+{"path": "/v1/chat/completions", "roles": ["system", "user"], "has_tool_result": false}
+{"path": "/v1/chat/completions", "roles": ["system", "user", "assistant", "tool"], "has_tool_result": true}

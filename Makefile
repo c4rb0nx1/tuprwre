@@ -1,7 +1,10 @@
-.PHONY: all build build-all test test-integration test-coverage stress-output-race bench-latency clean install install-system uninstall fmt lint deps verify dev run help
+.PHONY: all build build-gateway build-all test test-integration test-coverage stress-output-race bench-latency clean install install-system uninstall fmt lint deps verify dev run help
 
 # Binary name
 BINARY_NAME=tuprwre
+
+# Gateway binary name (record-only LLM reverse proxy)
+GATEWAY_BINARY_NAME=tprsh-gateway
 
 # Build directory
 BUILD_DIR=./build
@@ -32,6 +35,13 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/tuprwre
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Build the record-only LLM gateway binary
+build-gateway:
+	@echo "Building $(GATEWAY_BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(GATEWAY_BINARY_NAME) ./cmd/tprsh-gateway
+	@echo "Build complete: $(BUILD_DIR)/$(GATEWAY_BINARY_NAME)"
 
 # Build for multiple platforms
 build-all:
@@ -172,6 +182,7 @@ run: build
 help:
 	@echo "Available targets:"
 	@echo "  build         - Build the binary"
+	@echo "  build-gateway - Build the tprsh-gateway binary"
 	@echo "  build-all     - Build for multiple platforms"
 	@echo "  test          - Run tests"
 	@echo "  test-coverage - Run tests with coverage report"
