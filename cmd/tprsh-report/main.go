@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/c4rb0nx1/tuprwre/internal/classify"
 	"github.com/c4rb0nx1/tuprwre/internal/report"
 	"github.com/c4rb0nx1/tuprwre/internal/rules"
 )
@@ -37,7 +39,18 @@ type options struct {
 	taint     time.Duration
 	ignore    []string
 	rules     rules.Config
+
+	classifier       string
+	classifierModel  string
+	classifierThresh float64
+	classifierMax    int
+	classifierTO     time.Duration
+	classifierRemote bool
 }
+
+// classifierKeyEnv holds the optional bearer key for the classifier
+// endpoint; it is read from the environment so it never appears in argv.
+const classifierKeyEnv = "TPRSH_CLASSIFIER_API_KEY"
 
 func parseFlags(args []string, stderr io.Writer) (*options, error) {
 	fs := flag.NewFlagSet("tprsh-report", flag.ContinueOnError)
@@ -56,6 +69,13 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		ignore    []string
 		branches  []string
 		prodCtx   []string
+
+		classifier       = fs.String("classifier", "", "optional System One classifier (e.g. a local Kev: http://127.0.0.1:8009); advisory only, never changes a tier")
+		classifierModel  = fs.String("classifier-model", "kev-latest", "model name sent to the classifier")
+		classifierThresh = fs.Float64("classifier-threshold", report.DefaultReviewThreshold, "probability at or above which a classifier answer is flagged")
+		classifierMax    = fs.Int("classifier-max", report.DefaultReviewMaxItems, "maximum classifier requests per report")
+		classifierTO     = fs.Duration("classifier-timeout", 10*time.Second, "timeout per classifier request")
+		classifierRemote = fs.Bool("classifier-allow-remote", false, "permit a non-loopback classifier URL (redacted text leaves the machine)")
 	)
 	fs.Func("ignore-path", "absolute directory whose file writes are expected background activity, never covert (repeatable)", func(v string) error {
 		if !strings.HasPrefix(v, "/") {
@@ -77,7 +97,12 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		return nil, err
 	}
 	opts := &options{files: fs.Args(), workspace: *workspace, json: *asJSON, window: *window, slack: *slack,
-		taint: *taint, ignore: ignore, rules: rules.DefaultConfig}
+		taint: *taint, ignore: ignore, rules: rules.DefaultConfig,
+		classifier: *classifier, classifierModel: *classifierModel, classifierThresh: *classifierThresh,
+		classifierMax: *classifierMax, classifierTO: *classifierTO, classifierRemote: *classifierRemote}
+	if opts.classifier != "" && (opts.classifierThresh <= 0 || opts.classifierThresh > 1 || opts.classifierMax <= 0 || opts.classifierTO <= 0) {
+		return nil, errors.New("--classifier-threshold must be in (0,1]; --classifier-max and --classifier-timeout positive")
+	}
 	if len(branches) > 0 {
 		opts.rules.ProtectedBranches = branches
 	}
@@ -144,6 +169,17 @@ func run(opts *options, stdin io.Reader, stdout io.Writer) (int, error) {
 		Workspace: opts.workspace, Window: opts.window, Slack: opts.slack,
 		Rules: &cfg, IgnorePaths: opts.ignore, TaintWindow: opts.taint,
 	})
+	if opts.classifier != "" {
+		c, err := classify.NewSystemOne(opts.classifier, classify.Options{
+			Model: opts.classifierModel, APIKey: os.Getenv(classifierKeyEnv),
+			Timeout: opts.classifierTO, AllowRemote: opts.classifierRemote,
+		})
+		if err != nil {
+			return 0, err
+		}
+		// Fail open: classifier errors are recorded per item, never fatal.
+		report.Review(context.Background(), rep, c, report.ReviewOptions{Threshold: opts.classifierThresh, MaxItems: opts.classifierMax})
+	}
 	if opts.json {
 		err = report.WriteJSON(stdout, rep)
 	} else {

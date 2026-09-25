@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,5 +113,67 @@ func TestParseFlagsRulesAndPrecision(t *testing.T) {
 	}
 	if strings.Contains(out.String(), rules.RuleGitForcePushProtected) {
 		t.Error("main still protected with --protected-branch stable")
+	}
+}
+
+// TestRunWithClassifier drives the --classifier path end to end against a
+// fake System One server, including fail-open on a dead endpoint.
+func TestRunWithClassifier(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fake-key" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			Questions map[string]json.RawMessage `json:"questions"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		answers := map[string]any{}
+		for id := range req.Questions {
+			answers[id] = map[string]any{"type": "noul", "noul": 0.9}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"answers": answers})
+	}))
+	defer srv.Close()
+	t.Setenv(classifierKeyEnv, "fake-key")
+
+	base := func(url string) *options {
+		o, err := parseFlags([]string{"--json", "--classifier", url, gatewayLog, sensorLog}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	var out bytes.Buffer
+	if _, err := run(base(srv.URL), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	var rep struct {
+		Review struct {
+			Asked, Flagged, Errors int
+		} `json:"classifier_review"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Review.Asked != 7 || rep.Review.Flagged != 7 || rep.Review.Errors != 0 {
+		t.Errorf("review = %+v", rep.Review)
+	}
+
+	// A dead endpoint fails open: the report is still produced.
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close()
+	out.Reset()
+	code, err := run(base(deadURL), nil, &out)
+	if err != nil || code != 0 || !json.Valid(out.Bytes()) || !strings.Contains(out.String(), `"errors": 7`) {
+		t.Errorf("dead classifier: code %d err %v", code, err)
+	}
+
+	if _, err := run(base("https://kev.example.com"), nil, &out); err == nil {
+		t.Error("remote classifier accepted without --classifier-allow-remote")
+	}
+	if _, err := parseFlags([]string{"--classifier", "http://127.0.0.1:1", "--classifier-threshold", "1.5", "x"}, &bytes.Buffer{}); err == nil {
+		t.Error("threshold > 1 accepted")
 	}
 }

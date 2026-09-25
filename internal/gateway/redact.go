@@ -205,6 +205,12 @@ func redactValue(v any, sensitiveKey bool) (any, int) {
 	}
 }
 
+// RedactText applies the default secret patterns to free text, returning the
+// rewritten text and the number of replacements. It is the same pattern set
+// DefaultRedactor uses, for callers that send text off-process (e.g. to a
+// classifier plugin).
+func RedactText(s string) (string, int) { return redactString(s) }
+
 // redactString applies every pattern to s, returning the rewritten string and
 // the number of replacements.
 func redactString(s string) (string, int) {

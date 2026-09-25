@@ -293,3 +293,13 @@ func TestDefaultRedactorEffectArgvSplitScheme(t *testing.T) {
 		t.Errorf("argv = %q count = %d", got.Process.Argv, got.RedactionCount)
 	}
 }
+
+func TestRedactText(t *testing.T) {
+	out, n := RedactText("curl -H 'Authorization: Bearer fake-token-abc' https://x")
+	if n != 1 || strings.Contains(out, "fake-token-abc") {
+		t.Errorf("RedactText = %q, %d", out, n)
+	}
+	if out, n := RedactText("ls -la"); n != 0 || out != "ls -la" {
+		t.Errorf("clean text changed: %q %d", out, n)
+	}
+}

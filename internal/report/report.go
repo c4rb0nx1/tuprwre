@@ -1,6 +1,8 @@
 package report
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"path"
@@ -55,6 +57,8 @@ type Options struct {
 type Report struct {
 	Load     LoadStats  `json:"load"`
 	Sessions []*Session `json:"sessions"`
+	// Review summarizes the optional classifier pass; nil when none ran.
+	Review *ReviewStats `json:"classifier_review,omitempty"`
 }
 
 // Worst returns the most severe tier across all sessions.
@@ -102,9 +106,14 @@ type Intent struct {
 	// Effects is the number of effects attributed to this call.
 	Effects int `json:"effects"`
 	rules.Verdict
+	// Classifier is the optional classifier's view of the command.
+	Classifier *Assessment `json:"classifier,omitempty"`
+	// ResultClassifier is its view of the tool result (prompt injection).
+	ResultClassifier *Assessment `json:"result_classifier,omitempty"`
 
-	facts intentFacts
-	res   rules.Result
+	facts      intentFacts
+	res        rules.Result
+	resultText string
 }
 
 // Attribution explains why an effect is linked to a tool call.
@@ -140,6 +149,8 @@ type Effect struct {
 	// Covert marks a covert-action candidate.
 	Covert bool `json:"covert,omitempty"`
 	rules.Verdict
+	// Classifier is the optional classifier's view of an exec's command.
+	Classifier *Assessment `json:"classifier,omitempty"`
 
 	ev  event.Event
 	key string
@@ -214,6 +225,7 @@ func buildSession(id string, evs []event.Event, opts Options) *Session {
 		if r, ok := results[in.ToolCallID]; ok && !r.Time.Before(in.Time) {
 			t := r.Time
 			in.ResultTime, in.ResultIsError = &t, r.IsError
+			in.resultText = resultText(r.Result)
 		}
 	}
 
@@ -225,7 +237,7 @@ func buildSession(id string, evs []event.Event, opts Options) *Session {
 	}
 
 	attribute(s, tree, opts)
-	classify(s, opts)
+	applyRules(s, opts)
 
 	for _, in := range s.Intents {
 		s.count(in.Tier)
@@ -326,6 +338,23 @@ func (t *processTree) ancestors(k string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// resultText renders a recorded tool result as plain text: a JSON string is
+// unquoted, anything else is kept as compact JSON.
+func resultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var b bytes.Buffer
+	if json.Compact(&b, raw) == nil {
+		return b.String()
+	}
+	return string(raw)
 }
 
 // window is the span of time in which an intent's effects may occur.
@@ -484,9 +513,9 @@ func matchByMention(ef *Effect, cands []*Intent) *Attribution {
 	return nil
 }
 
-// classify applies the fixed rules, then the cross-event rule: after a
+// applyRules applies the fixed rules, then the cross-event rule: after a
 // credential read, later egress is red (within Options.TaintWindow, when set).
-func classify(s *Session, opts Options) {
+func applyRules(s *Session, opts Options) {
 	type item struct {
 		t        time.Time
 		res      *rules.Result

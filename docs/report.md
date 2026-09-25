@@ -44,6 +44,7 @@ tprsh-report --json --fail-on red gw.jsonl fx.jsonl   # machine-readable; exit 3
 | `--ignore-path DIR` | Absolute `DIR`. File writes under it are expected background activity (e.g. a harness's own state or cache directory). They are shown as `[ignored path]` and are never covert candidates. Repeatable. Credential reads are never ignored. |
 | `--protected-branch NAME` | Protected branch; a trailing `*` matches any suffix (`release/*`). Repeatable; replaces the default list. |
 | `--prod-context SUBSTR` | Case-insensitive substring marking a kubectl context as production. Repeatable; replaces the default `prod`. |
+| `--classifier URL` and related flags | Optional, advisory classifier pass (e.g. a local Kev). It annotates yellow and covert items and tool results, and never changes a tier. See [`classifier.md`](classifier.md). |
 
 Events are grouped by `session_id`; events without one go into session
 `(none)`. Records with the same `id` are loaded once, so passing a log twice or

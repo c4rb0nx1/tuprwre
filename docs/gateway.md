@@ -23,6 +23,7 @@ The gateway is one of three record-layer pieces. Together they reconcile
 | `tprsh-gateway` | tool-call intent and tool results, from the LLM wire | this page |
 | `tprsh-sensor` | host effects (exec, file, network, exit), from an OS sensor such as Tetragon | [`sensor.md`](sensor.md) |
 | `tprsh-report` | per-session reconciliation, covert-action candidates, would-be green/yellow/red tiers | [`report.md`](report.md) |
+| classifier plugin (optional) | advisory second opinion on yellow and covert items, e.g. a local [Kev](https://github.com/jaredpalmer/kev) | [`classifier.md`](classifier.md) |
 
 Give the gateway and the sensor the same `--session-id` so the report can pair
 their logs.

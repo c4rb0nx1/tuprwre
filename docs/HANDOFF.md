@@ -98,6 +98,16 @@ Cloud session, second round (the follow-ups listed after round one):
   to, for the same session id).
 - `f65b00f`: logs keep `<`, `>`, `&` literal (no HTML escaping).
 
+Kev evaluation (this commit): [Kev](https://github.com/jaredpalmer/kev) is a
+set of open-weight, local, Jev-compatible (System One API) decision models, a
+self-hosted option for the yellow-tier classifier. `internal/classify` adds a
+stdlib System One client and the fixed `tprsh-q1` questions.
+`tprsh-report --classifier` asks them about yellow and covert items and about
+tool results (prompt injection). The pass is advisory, fail-open, redacted and
+loopback-only by default. The request/response contract is checked against
+Kev's own `kev/api.py` (`TestKevContract`). Real Kev inference was not run:
+Hugging Face is blocked by the cloud network policy. See `docs/classifier.md`.
+
 Capabilities landed: record-only gateway; three wire extractors; request-side
 `tool_result` extraction with dedup (also across restarts); async sink with
 `Stats`; drain-safe bounded `Close`; default-on pattern redaction (payloads
@@ -124,9 +134,14 @@ heuristic (see `docs/report.md` Limits).
 2. **eslogger adapter** (local-only: macOS root + Full Disk Access). Implement
    `sensor.Sensor` and satisfy `sensor.Validate`; model the tests on
    `internal/sensor/tetragon`.
-3. **Report**: per-session workspace overrides; linking effects by cwd as well
+3. **Run Kev for real** (local, Kev-4B or larger): serve it, run
+   `tprsh-report --classifier` on dogfood sessions, label the flagged items,
+   and pick a threshold. Kev-0.8B is not suitable (near chance on prompt
+   injection). Later, fine-tune on labelled tprsh items with Kev's
+   `skills/kev-finetune`.
+4. **Report**: per-session workspace overrides; linking effects by cwd as well
    as by time.
-4. Dogfooding with real keys; subscription-auth test (local).
+5. Dogfooding with real keys; subscription-auth test (local).
 
 Scripts:
 

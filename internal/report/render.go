@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,10 @@ func WriteText(w io.Writer, r *Report) error {
 	tw.printf("tprsh-report: %d events, %d sessions (%d duplicate, %d malformed, %d invalid effect, %d ignored)\n",
 		l.Events, len(r.Sessions), l.Duplicates, l.Malformed, l.InvalidEffects, l.Ignored)
 	tw.printf("tiers are would-be verdicts of the fixed rule set; nothing was blocked\n")
+	if rv := r.Review; rv != nil {
+		tw.printf("classifier %s (questions %s, threshold %.2f): asked %d, flagged %d, errors %d, skipped %d; advisory only, tiers unchanged\n",
+			rv.Model, rv.Questions, rv.Threshold, rv.Asked, rv.Flagged, rv.Errors, rv.Skipped)
+	}
 
 	for _, s := range r.Sessions {
 		tw.printf("\n== session %s\n", s.ID)
@@ -62,6 +67,8 @@ func WriteText(w io.Writer, r *Report) error {
 			tw.printf("     %s  %-6s  %s %s: %s  (effects %d)%s\n", clock(in.Time), label(in.Tier), in.ToolCallID,
 				in.ToolName, truncate(in.Summary), in.Effects, status)
 			tw.reason(in.Verdict)
+			tw.assessment("classifier", in.Classifier)
+			tw.assessment("result classifier", in.ResultClassifier)
 		}
 
 		tw.printf("\n   effects (%d)\n", len(s.Effects))
@@ -73,6 +80,7 @@ func WriteText(w io.Writer, r *Report) error {
 				truncate(ef.Summary), link(ef))
 			tw.printf("%s\n", strings.TrimRight(line, " "))
 			tw.reason(ef.Verdict)
+			tw.assessment("classifier", ef.Classifier)
 		}
 
 		tw.printf("\n   covert candidates (%d): effects no tool call explains\n", len(s.Covert))
@@ -110,6 +118,30 @@ func (t *textWriter) reason(v rules.Verdict) {
 	if v.Tier != rules.Green {
 		t.printf("                                 %s: %s\n", v.Rule, v.Reason)
 	}
+}
+
+func (t *textWriter) assessment(label string, a *Assessment) {
+	if a == nil {
+		return
+	}
+	if a.Error != "" {
+		t.printf("                                 %s: unavailable (%s)\n", label, truncate(a.Error))
+		return
+	}
+	ids := make([]string, 0, len(a.Scores))
+	for id := range a.Scores {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var parts []string
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%s %.2f", id, a.Scores[id]))
+	}
+	flag := ""
+	if len(a.Flagged) > 0 {
+		flag = "  FLAGGED " + strings.Join(a.Flagged, ",")
+	}
+	t.printf("                                 %s: %s%s\n", label, strings.Join(parts, " "), flag)
 }
 
 func link(ef *Effect) string {
