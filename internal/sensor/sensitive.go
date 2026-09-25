@@ -32,7 +32,7 @@ var sensitiveDirs = []string{
 
 // IsSensitivePath reports whether p names a credential file: cloud and
 // cluster credentials, SSH private keys, token stores, shadow password files,
-// dotenv files and private-key material. p may be absolute, relative, or
+// dotenv files, private-key material and keystores. p may be absolute, relative, or
 // start with "~" or "$HOME"; it is matched lexically and never touches the
 // filesystem. The list is a fixed, conservative default: it favours common
 // credential locations over completeness.
@@ -61,7 +61,7 @@ func IsSensitivePath(p string) bool {
 		return true
 	case base == ".env" || (strings.HasPrefix(base, ".env.") && !isEnvTemplate(base)):
 		return true
-	case strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".p12") || strings.HasSuffix(base, ".pfx"):
+	case hasAnySuffix(base, ".key", ".p12", ".pfx", ".keystore", ".jks", ".kdbx", ".ppk"):
 		// Exclude system trust stores, which every TLS client reads.
 		return !strings.HasPrefix(p, "/etc/ssl/") && !strings.HasPrefix(p, "/etc/pki/")
 	}
@@ -73,6 +73,15 @@ func IsSensitivePath(p string) bool {
 func isEnvTemplate(base string) bool {
 	for _, s := range []string{".example", ".sample", ".template", ".dist"} {
 		if strings.HasSuffix(base, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnySuffix(s string, suffixes ...string) bool {
+	for _, x := range suffixes {
+		if strings.HasSuffix(s, x) {
 			return true
 		}
 	}

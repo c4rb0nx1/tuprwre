@@ -8,17 +8,21 @@
 //   - process_exec   -> exec
 //   - process_exit   -> proc_exit
 //   - process_kprobe -> net_connect   (connect hooks carrying a sock/sockaddr arg)
+//   - process_connect -> net_connect  (legacy/enterprise event type)
 //   - process_kprobe -> file_write    (security_file_permission with MAY_WRITE,
-//     security_path_truncate)
+//     security_path_truncate, sys_write-family syscall hooks)
 //   - process_kprobe -> file_read_sensitive (security_file_permission with
-//     MAY_READ, security_file_open, fd_install on a path IsSensitivePath accepts)
+//     MAY_READ, security_file_open, fd_install, sys_read-family syscall hooks,
+//     on a path IsSensitivePath accepts)
 //
 // Everything else is counted as ignored. This package is the only code that
 // knows Tetragon's format; nothing downstream may depend on it.
 //
-// The mapping is written against Tetragon's documented export format and is
-// tested with synthetic fixtures only; it has not been verified against a live
-// Tetragon agent.
+// The mapping was cross-checked against Tetragon's source (argument quoting in
+// pkg/sensors/exec, exit status in pkg/grpc/exec, kprobe argument names in
+// api/v1/tetragon) at cilium/tetragon a58fbc7, and against the recorded event
+// samples in Tetragon's documentation (see TestUpstreamRecordedSamples). It
+// has not been run against a live Tetragon agent.
 package tetragon
 
 import (
@@ -131,7 +135,11 @@ type tgRecord struct {
 	ProcessExec   *tgExec   `json:"process_exec"`
 	ProcessExit   *tgExit   `json:"process_exit"`
 	ProcessKprobe *tgKprobe `json:"process_kprobe"`
-	Time          string    `json:"time"`
+	// ProcessConnect is a legacy/enterprise event type seen in Tetragon's
+	// recorded documentation samples; current open-source releases report
+	// connections as kprobes instead.
+	ProcessConnect *tgConnect `json:"process_connect"`
+	Time           string     `json:"time"`
 }
 
 type tgProcess struct {
@@ -165,12 +173,38 @@ type tgKprobe struct {
 	Args         []tgArg    `json:"args"`
 }
 
+type tgConnect struct {
+	Process         *tgProcess `json:"process"`
+	Parent          *tgProcess `json:"parent"`
+	SourceIP        string     `json:"source_ip"`
+	SourcePort      int        `json:"source_port"`
+	DestinationIP   string     `json:"destination_ip"`
+	DestinationPort int        `json:"destination_port"`
+	Protocol        string     `json:"protocol"`
+}
+
 type tgArg struct {
 	FileArg     *tgPath     `json:"file_arg"`
 	PathArg     *tgPath     `json:"path_arg"`
-	IntArg      *int64      `json:"int_arg"`
+	IntArg      *flexInt    `json:"int_arg"`
+	UintArg     *flexInt    `json:"uint_arg"`
+	LongArg     *flexInt    `json:"long_arg"`
 	SockArg     *tgSock     `json:"sock_arg"`
 	SockaddrArg *tgSockaddr `json:"sockaddr_arg"`
+}
+
+// flexInt decodes an integer sent either as a JSON number (protojson 32-bit
+// fields) or as a JSON string (protojson 64-bit fields).
+type flexInt int64
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	var n json.Number
+	if err := json.Unmarshal(bytes.Trim(b, `"`), &n); err != nil {
+		return err
+	}
+	v, err := n.Int64()
+	*f = flexInt(v)
+	return err
 }
 
 type tgPath struct {
@@ -241,6 +275,18 @@ func (s *Sensor) translate(line []byte) (event.Event, result) {
 		if res != resultEvent {
 			return event.Event{}, res
 		}
+	case rec.ProcessConnect != nil:
+		c := rec.ProcessConnect
+		proc, parent = c.Process, c.Parent
+		proto := strings.ToLower(c.Protocol)
+		if (proto != "tcp" && proto != "udp") || c.DestinationIP == "" {
+			return event.Event{}, resultError
+		}
+		kind = event.KindNetConnect
+		fill = func(e *event.Event) result {
+			e.Net = &event.Net{Protocol: proto, SrcAddr: c.SourceIP, SrcPort: c.SourcePort, DstAddr: c.DestinationIP, DstPort: c.DestinationPort}
+			return resultEvent
+		}
 	default:
 		return event.Event{}, resultIgnored
 	}
@@ -305,7 +351,13 @@ func mapKprobe(k *tgKprobe) (event.Kind, func(*event.Event) result, result) {
 		p     string
 		write bool
 	)
-	switch fn {
+	switch syscallName(fn) {
+	case "sys_write", "sys_pwrite64", "sys_writev", "sys_pwritev", "sys_pwritev2", "ksys_write", "vfs_write":
+		// Syscall-level hooks with the fd resolved to a file_arg, as in
+		// Tetragon's older file-monitoring examples.
+		p, write = filePath(k.Args), true
+	case "sys_read", "sys_pread64", "sys_readv", "sys_preadv", "sys_preadv2", "ksys_read", "vfs_read":
+		p = filePath(k.Args)
 	case "security_file_permission":
 		mask, ok := intArg(k.Args)
 		p = filePath(k.Args)
@@ -359,22 +411,47 @@ func netProtocol(proto, fn string) string {
 	return ""
 }
 
+// syscallName strips an architecture prefix from a syscall hook name, e.g.
+// "__x64_sys_write" -> "sys_write".
+func syscallName(fn string) string {
+	for _, p := range []string{"__x64_", "__arm64_", "__ia32_", "__se_", "__do_"} {
+		if strings.HasPrefix(fn, p) {
+			return strings.TrimPrefix(fn, p)
+		}
+	}
+	return fn
+}
+
+// filePath returns the first file or path argument. Tetragon renders some
+// dentry-derived paths without the leading slash (e.g. "etc/passwd"); they
+// are always rooted, so the slash is restored.
 func filePath(args []tgArg) string {
 	for _, a := range args {
+		var p string
 		switch {
 		case a.FileArg != nil:
-			return a.FileArg.Path
+			p = a.FileArg.Path
 		case a.PathArg != nil:
-			return a.PathArg.Path
+			p = a.PathArg.Path
+		default:
+			continue
 		}
+		if p != "" && !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		return p
 	}
 	return ""
 }
 
+// intArg returns the first integer argument (the permission mask of
+// security_file_permission), whichever integer type the policy declared.
 func intArg(args []tgArg) (int64, bool) {
 	for _, a := range args {
-		if a.IntArg != nil {
-			return *a.IntArg, true
+		for _, v := range []*flexInt{a.IntArg, a.UintArg, a.LongArg} {
+			if v != nil {
+				return int64(*v), true
+			}
 		}
 	}
 	return 0, false
@@ -390,7 +467,7 @@ func convertProcess(p, parent *tgProcess) *event.Process {
 		Binary:       p.Binary,
 		Argv:         splitArguments(p.Binary, p.Arguments),
 	}
-	if !hasFlag(p.Flags, "nocwd") {
+	if !hasFlag(p.Flags, "nocwd") && !hasFlag(p.Flags, "errorCWD") {
 		out.Cwd = p.Cwd
 	}
 	if parent != nil {
@@ -404,15 +481,55 @@ func convertProcess(p, parent *tgProcess) *event.Process {
 	return out
 }
 
-// splitArguments rebuilds argv from Tetragon's binary path and its
-// space-joined argument string. The export does not preserve argument
-// boundaries, so an argument containing whitespace is split into several;
-// argv[0] is the binary path, not the name the process was invoked as.
+// splitArguments rebuilds argv from Tetragon's binary path and its argument
+// string. Tetragon (pkg/sensors/exec resolveArgs) joins arguments with single
+// spaces, wraps an argument that contains a space in double quotes without
+// escaping, and writes an empty argument as "". This inverts that encoding;
+// it is exact unless an argument itself contains a double quote next to a
+// space. Older Tetragon releases joined without quoting, which this reads as
+// space-separated words. argv[0] is the binary path, not the name the process
+// was invoked as.
 func splitArguments(binary, args string) []string {
 	if binary == "" {
 		return nil
 	}
-	return append([]string{binary}, strings.Fields(args)...)
+	argv := []string{binary}
+	for i := 0; i < len(args); {
+		switch {
+		case args[i] == ' ':
+			i++
+		case args[i] == '"':
+			// A quoted argument ends at a quote followed by a space or
+			// the end of the string.
+			end := -1
+			for j := i + 1; j < len(args); j++ {
+				if args[j] == '"' && (j+1 == len(args) || args[j+1] == ' ') {
+					end = j
+					break
+				}
+			}
+			if end < 0 {
+				// Unbalanced: treat the rest of the word literally.
+				j := strings.IndexByte(args[i:], ' ')
+				if j < 0 {
+					j = len(args) - i
+				}
+				argv = append(argv, args[i:i+j])
+				i += j
+				continue
+			}
+			argv = append(argv, args[i+1:end])
+			i = end + 1
+		default:
+			j := strings.IndexByte(args[i:], ' ')
+			if j < 0 {
+				j = len(args) - i
+			}
+			argv = append(argv, args[i:i+j])
+			i += j
+		}
+	}
+	return argv
 }
 
 // hasFlag reports whether Tetragon's space-separated flags string contains f.

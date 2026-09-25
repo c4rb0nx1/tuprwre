@@ -2,10 +2,11 @@
 # Tetragon adapter maps (internal/sensor/tetragon). Process exec/exit events
 # are emitted by Tetragon without any policy.
 #
-# ILLUSTRATIVE ONLY: written against Tetragon's documented policy format and
-# NOT verified against a live Tetragon agent. Review the path lists for your
-# hosts before use. This policy only observes (no Sigkill/Override actions);
-# tprsh is a record layer, not a sandbox.
+# Parses and validates with Tetragon's own policy loader
+# (pkg/tracingpolicy.FromFile, checked against cilium/tetragon a58fbc7), but
+# has NOT been loaded into a live agent. Review the path lists for your hosts
+# before use. This policy only observes (no Sigkill/Override actions); tprsh is
+# a record layer, not a sandbox.
 apiVersion: cilium.io/v1alpha1
 kind: TracingPolicy
 metadata:
@@ -18,9 +19,10 @@ spec:
     args:
     - index: 0
       type: "sock"
-  # File access -> file_write (mask 2 = MAY_WRITE) and, for credential
-  # paths, file_read_sensitive (mask 4 = MAY_READ). Selectors are OR'ed;
-  # matchArgs within one selector are AND'ed.
+  # File access -> file_write (mask bit 2 = MAY_WRITE) and, for credential
+  # paths, file_read_sensitive (mask bit 4 = MAY_READ). "Mask" matches when
+  # any listed bit is set, so a read+write open (6) is caught by both.
+  # Selectors are OR'ed; matchArgs within one selector are AND'ed.
   - call: "security_file_permission"
     syscall: false
     args:
@@ -39,7 +41,7 @@ spec:
         - "/var/lib/"
         - "/srv/"
       - index: 1
-        operator: "Equal"
+        operator: "Mask"
         values:
         - "2"
     - matchArgs:
@@ -61,7 +63,7 @@ spec:
         - "/etc/shadow"
         - "/.env"
       - index: 1
-        operator: "Equal"
+        operator: "Mask"
         values:
         - "4"
   # Truncation -> file_write.

@@ -225,10 +225,10 @@ func TestMalformedAndIncompleteRecords(t *testing.T) {
 	}
 }
 
-// TestContractRejectsRelativePath proves a translation that violates the
+// TestContractRejectsBadAddress proves a translation that violates the
 // effect contract is dropped by sensor.Record rather than persisted.
-func TestContractRejectsRelativePath(t *testing.T) {
-	_, st, ev := record(t, `{"process_kprobe":{`+proc+`,"function_name":"security_path_truncate","args":[{"path_arg":{"path":"rel/log"}}]},"time":"2026-09-21T09:00:00Z"}`, Options{})
+func TestContractRejectsBadAddress(t *testing.T) {
+	_, st, ev := record(t, `{"process_kprobe":{`+proc+`,"function_name":"tcp_connect","args":[{"sock_arg":{"protocol":"IPPROTO_TCP","daddr":"not-an-ip","dport":443}}]},"time":"2026-09-21T09:00:00Z"}`, Options{})
 	if len(ev) != 0 || st.EventsInvalid != 1 {
 		t.Errorf("events = %+v stats = %+v", ev, st)
 	}
@@ -244,3 +244,129 @@ func TestRunStopsOnCancel(t *testing.T) {
 }
 
 func intp(i int) *int { return &i }
+
+// TestSplitArguments pins the inverse of Tetragon's argument encoding
+// (pkg/sensors/exec resolveArgs): single-space joins, double quotes around an
+// argument containing a space, "" for an empty argument.
+func TestSplitArguments(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{``, []string{"/b"}},
+		{`a b`, []string{"/b", "a", "b"}},
+		{`-c "cd x && ls" done`, []string{"/b", "-c", "cd x && ls", "done"}},
+		{`"" x`, []string{"/b", "", "x"}},
+		{`-H "Authorization: Bearer t"`, []string{"/b", "-H", "Authorization: Bearer t"}},
+		{`a"b c`, []string{"/b", `a"b`, "c"}},
+		{`"unbalanced x`, []string{"/b", `"unbalanced`, "x"}},
+		{"tab\tstays", []string{"/b", "tab\tstays"}},
+	}
+	for _, c := range cases {
+		got := splitArguments("/b", c.in)
+		if strings.Join(got, "\x00") != strings.Join(c.want, "\x00") {
+			t.Errorf("splitArguments(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if splitArguments("", "x") != nil {
+		t.Error("argv without a binary")
+	}
+}
+
+// TestSyscallFileHooksAndRootlessPaths covers the shapes seen in Tetragon's
+// recorded documentation samples: syscall-level read/write hooks with the fd
+// resolved to a file_arg whose path lacks the leading slash, 64-bit integer
+// arguments encoded as strings, and the errorCWD flag.
+func TestSyscallFileHooksAndRootlessPaths(t *testing.T) {
+	cases := []struct {
+		fn, args string
+		kind     event.Kind
+		path     string
+	}{
+		{"__x64_sys_write", `{"file_arg":{"path":"etc/passwd"}},{"bytes_arg":"eA=="},{"size_arg":"1"}`, event.KindFileWrite, "/etc/passwd"},
+		{"__arm64_sys_pwrite64", `{"file_arg":{"path":"/srv/x"}}`, event.KindFileWrite, "/srv/x"},
+		{"__x64_sys_read", `{"file_arg":{"path":"home/a/.aws/credentials"}},{"size_arg":"4096"}`, event.KindFileReadSensitive, "/home/a/.aws/credentials"},
+		{"security_file_permission", `{"file_arg":{"path":"/srv/o"}},{"long_arg":"2"}`, event.KindFileWrite, "/srv/o"},
+		{"security_file_permission", `{"file_arg":{"path":"/root/.netrc"}},{"uint_arg":4}`, event.KindFileReadSensitive, "/root/.netrc"},
+	}
+	for _, c := range cases {
+		_, ev := one(t, `{"process_kprobe":{`+proc+`,"function_name":"`+c.fn+`","args":[`+c.args+`]},"time":"2026-09-21T09:00:00Z"}`)
+		if len(ev) != 1 || ev[0].Kind != c.kind || ev[0].File.Path != c.path {
+			t.Errorf("%s %s: events = %+v", c.fn, c.args, ev)
+		}
+	}
+	s, ev := one(t, `{"process_kprobe":{`+proc+`,"function_name":"__x64_sys_read","args":[{"file_arg":{"path":"srv/readme"}}]},"time":"2026-09-21T09:00:00Z"}`)
+	if len(ev) != 0 || s.Ignored() != 1 {
+		t.Errorf("non-sensitive syscall read not ignored: %+v", ev)
+	}
+
+	line := strings.Replace(`{"process_exec":{`+proc+`},"time":"2026-09-21T09:00:00Z"}`, `"flags":"execve"`, `"flags":"execve errorCWD"`, 1)
+	if _, ev := one(t, line); len(ev) != 1 || ev[0].Process.Cwd != "" {
+		t.Errorf("errorCWD kept cwd: %+v", ev)
+	}
+}
+
+// TestUpstreamRecordedSamples runs the adapter over the real, recorded event
+// samples shipped in Tetragon's documentation. They are not vendored here;
+// point TPRSH_TETRAGON_SRC at a cilium/tetragon checkout to run it.
+func TestUpstreamRecordedSamples(t *testing.T) {
+	src := os.Getenv("TPRSH_TETRAGON_SRC")
+	if src == "" {
+		t.Skip("TPRSH_TETRAGON_SRC not set (path to a cilium/tetragon checkout)")
+	}
+	var files []string
+	err := filepath.WalkDir(filepath.Join(src, "docs", "security-observability-with-ebpf"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".json") {
+			files = append(files, p)
+		}
+		return err
+	})
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no samples found under %s: %v", src, err)
+	}
+	var input bytes.Buffer
+	var natives int
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(raw, &probe) != nil {
+			continue // not a single event object
+		}
+		if probe["process_exec"] == nil && probe["process_exit"] == nil && probe["process_kprobe"] == nil && probe["process_connect"] == nil {
+			continue
+		}
+		if err := json.Compact(&input, raw); err != nil {
+			t.Fatal(err)
+		}
+		input.WriteByte('\n')
+		natives++
+	}
+	s, st, events := record(t, input.String(), Options{})
+	t.Logf("%d sample events: emitted %d, ignored %d, errors %d, invalid %d", natives, st.EventsEmitted, s.Ignored(), s.Errors(), st.EventsInvalid)
+	if s.Errors() != 0 || st.EventsInvalid != 0 {
+		t.Errorf("recorded upstream samples: %d native errors, %d contract violations", s.Errors(), st.EventsInvalid)
+	}
+	if st.EventsEmitted == 0 {
+		t.Error("no events emitted from upstream samples")
+	}
+	for _, e := range events {
+		if err := sensor.Validate(e); err != nil {
+			t.Errorf("%s: %v", e.ID, err)
+		}
+	}
+}
+
+func TestLegacyProcessConnect(t *testing.T) {
+	_, ev := one(t, `{"process_connect":{`+proc+`,"source_ip":"10.88.0.6","source_port":48416,"destination_ip":"192.0.2.5","destination_port":443,"protocol":"TCP"},"time":"2026-09-21T09:00:00Z"}`)
+	want := event.Net{Protocol: "tcp", SrcAddr: "10.88.0.6", SrcPort: 48416, DstAddr: "192.0.2.5", DstPort: 443}
+	if len(ev) != 1 || ev[0].Kind != event.KindNetConnect || *ev[0].Net != want {
+		t.Errorf("events = %+v", ev)
+	}
+	s, _ := one(t, `{"process_connect":{`+proc+`,"destination_ip":"192.0.2.5","destination_port":1,"protocol":"ICMP"},"time":"2026-09-21T09:00:00Z"}`)
+	if s.Errors() != 1 {
+		t.Error("unknown protocol not counted as error")
+	}
+}

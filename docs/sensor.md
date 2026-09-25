@@ -19,7 +19,7 @@ Sensors only observe. They never block, confine, or change what they see.
 | `Validate` | The effect-event contract (below). |
 | `Replay` | Reference `Sensor` that re-emits events already in the tprsh schema from JSONL. Used for fixtures and recorded logs. |
 | `EffectKinds`, `IsEffect` | The effect kinds a sensor may emit. |
-| `IsSensitivePath` | Fixed, lexical list of credential locations (cloud/cluster configs, SSH private keys, token stores, `.env`, `*.key`). Used by adapters to classify reads, and by `tprsh-report`. |
+| `IsSensitivePath` | Fixed, lexical list of credential locations (cloud/cluster configs, SSH private keys, token stores, `.env`, key and keystore files). Used by adapters to classify reads, and by `tprsh-report`. |
 | `ReadLine` | Bounded line reader shared by line-delimited adapters. |
 
 Adapters wrap each tool's native output. Tetragon (Linux) is implemented
@@ -43,31 +43,50 @@ agent's export file.
 | `process_exec` | `exec` (skipped when flagged `procFS`, i.e. the process already existed when Tetragon started) |
 | `process_exit` | `proc_exit`: `signal` if set, otherwise `code` from `status` (a missing `status` means 0) |
 | `process_kprobe` on a `*connect*` hook with `sock_arg` / `sockaddr_arg` | `net_connect` (`IPPROTO_TCP`/`IPPROTO_UDP`, or inferred from the hook name) |
-| `process_kprobe` `security_file_permission` with mask `MAY_WRITE`, or `security_path_truncate` | `file_write` |
-| `process_kprobe` `security_file_permission` with mask `MAY_READ`, `security_file_open`, or `fd_install`, on a path `sensor.IsSensitivePath` accepts | `file_read_sensitive` |
+| `process_connect` (legacy/enterprise event type) | `net_connect` |
+| `process_kprobe` `security_file_permission` with mask `MAY_WRITE`, `security_path_truncate`, or a `sys_write`-family syscall hook | `file_write` |
+| `process_kprobe` `security_file_permission` with mask `MAY_READ`, `security_file_open`, `fd_install`, or a `sys_read`-family syscall hook, on a path `sensor.IsSensitivePath` accepts | `file_read_sensitive` |
 
 Every other record is counted as ignored. This includes `process_loader`, any
 other hook, and reads of files that aren't sensitive. A record that can't be
 translated is counted as an error, never emitted: bad JSON, no time, no pid, no
 path, no address, or an unknown protocol.
 
+The integer mask is read from `int_arg`, `uint_arg`, or `long_arg` (64-bit
+integers arrive as JSON strings). Tetragon renders some file paths without the
+leading slash (`etc/passwd`); the adapter restores it. The flags `nocwd` and
+`errorCWD` drop the cwd.
+
 Event IDs are derived from a hash of the native line, so reading the same
 export twice produces the same IDs. Consumers can deduplicate on `id`.
 
-**argv is lossy.** Tetragon reports arguments as one space-joined string, so
-the adapter splits it on whitespace. An argument that contained spaces becomes
-several entries, and `argv[0]` is the binary path. Redaction compensates for
-one case: a token split off from its `Bearer`/`Basic` scheme is still redacted.
+**argv.** Tetragon joins arguments with single spaces and wraps any argument
+that contains a space in double quotes, without escaping; an empty argument is
+written as `""`. The adapter inverts that encoding, so argv is exact unless an
+argument itself contains a double quote next to a space. Older Tetragon
+releases joined without quoting, and the adapter reads those as
+space-separated words. `argv[0]` is the binary path. Redaction still handles a
+token split off from its `Bearer`/`Basic` scheme.
 
-**Not verified live.** The mapping follows Tetragon's documented export format,
-and all tests use a synthetic fixture:
-`internal/sensor/tetragon/testdata/session.jsonl`, whose normalized, redacted
-output is pinned in `session.expected.jsonl` (regenerate with
-`go test ./internal/sensor/tetragon -update`). No live eBPF run backs it.
+### What has been verified
+
+| Check | Status |
+|---|---|
+| Export format against Tetragon source (`cilium/tetragon` a58fbc7): argument quoting (`pkg/sensors/exec` `resolveArgs`), exit `status` = wait status `>> 8` and `signal` names (`pkg/grpc/exec`), kprobe argument and socket field names (`api/v1/tetragon`), flag strings (`pkg/reader/exec`) | Done |
+| Real recorded events: the 34 exec/exit/kprobe/connect samples in Tetragon's documentation (`docs/security-observability-with-ebpf`) all translate and pass the contract. Run with `TPRSH_TETRAGON_SRC=/path/to/tetragon go test ./internal/sensor/tetragon -run Upstream` (samples are not vendored). | Done |
+| `docs/tetragon/tprsh-effects.yaml` parses and validates with Tetragon's own loader (`pkg/tracingpolicy.FromFile`); a bad operator is rejected. | Done |
+| A live Tetragon agent on this pipeline | **Not done.** Tetragon and its BPF objects build in the cloud VM (root, BTF present), but mounting bpffs/tracefs to start the agent was not permitted there. |
+
+The synthetic session fixture
+(`internal/sensor/tetragon/testdata/session.jsonl`) uses Tetragon's real
+argument encoding. Its normalized, redacted output is pinned in
+`session.expected.jsonl` (regenerate with
+`go test ./internal/sensor/tetragon -update`).
 
 [`docs/tetragon/tprsh-effects.yaml`](tetragon/tprsh-effects.yaml) is an
 example TracingPolicy (observe-only) that produces the kprobe events above. It
-is also unverified.
+uses the `Mask` operator, so an open for read and write (mask 6) matches both
+selectors.
 
 ### Running it: `tprsh-sensor`
 

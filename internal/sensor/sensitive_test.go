@@ -18,6 +18,10 @@ func TestIsSensitivePath(t *testing.T) {
 		"work/.env.production",
 		"/home/agent/work/tls/server.key",
 		"/home/agent/.aws/../.aws/credentials",
+		"/usr/share/elasticsearch/config/elasticsearch.keystore",
+		"/opt/app/conf/truststore.jks",
+		"/home/agent/vault.kdbx",
+		"/home/agent/keys/server.ppk",
 	}
 	no := []string{
 		"",
