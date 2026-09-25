@@ -191,9 +191,13 @@ func run(opts *options) error {
 		fmt.Fprintf(os.Stderr, "tprsh-gateway: recording events to %s\n", opts.logPath)
 	}
 
-	var recordSink gateway.Sink
+	var (
+		recordSink gateway.Sink
+		prior      []proxy.ResultKey
+	)
 	if sink != nil {
 		recordSink = sink
+		prior = loadPriorResults(opts.logPath, opts.sessionID, os.Stderr)
 	}
 	p, err := proxy.New(proxy.Config{
 		Upstream:         opts.upstream,
@@ -201,6 +205,7 @@ func run(opts *options) error {
 		SessionID:        opts.sessionID,
 		DisableRedaction: opts.noRedact,
 		ErrorLog:         newLogger(os.Stderr),
+		PriorResults:     prior,
 	})
 	if err != nil {
 		return err
@@ -249,6 +254,30 @@ func run(opts *options) error {
 	}
 	fmt.Fprintln(os.Stderr, string(stats))
 	return nil
+}
+
+// loadPriorResults returns the tool results an earlier gateway already
+// recorded for sessionID in the log being appended to, so a restart does not
+// re-record the conversation history the harness resends. A missing or empty
+// log yields nothing; a read failure is only warned about, since recording
+// matters more than dedup.
+func loadPriorResults(path, sessionID string, stderr io.Writer) []proxy.ResultKey {
+	f, err := os.Open(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(stderr, "tprsh-gateway: WARNING: cannot read %s for dedup: %v\n", path, err)
+		}
+		return nil
+	}
+	defer f.Close()
+	prior, err := proxy.PriorResults(f, sessionID)
+	if err != nil {
+		fmt.Fprintf(stderr, "tprsh-gateway: WARNING: reading %s for dedup: %v\n", path, err)
+	}
+	if len(prior) > 0 {
+		fmt.Fprintf(stderr, "tprsh-gateway: resuming session %s: %d tool results already in the log will not be re-recorded\n", sessionID, len(prior))
+	}
+	return prior
 }
 
 // closeBounded stops recording and waits for the pipeline to drain, bounded by

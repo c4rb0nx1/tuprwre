@@ -45,6 +45,11 @@ type Config struct {
 	// DisableRedaction turns off the default redactor. It has no effect when
 	// Redactor is set.
 	DisableRedaction bool
+	// PriorResults are tool results an earlier process already recorded
+	// (see PriorResults). They seed the dedup set so a restarted gateway
+	// does not re-record them. The most recent entries win when there are
+	// more than the dedup capacity.
+	PriorResults []ResultKey
 }
 
 // Proxy is the record-only reverse proxy. Requests are forwarded by the
@@ -67,6 +72,9 @@ func New(cfg Config) (*Proxy, error) {
 		redactor = gateway.DefaultRedactor
 	}
 	em := newEmitter(cfg.Sink, redactor, cfg.ErrorLog)
+	for _, k := range cfg.PriorResults {
+		em.seen.add(k.key())
+	}
 
 	rp := httputil.NewSingleHostReverseProxy(cfg.Upstream)
 	// The default director rewrites only URL.Scheme/Host/Path; without this,
@@ -254,7 +262,7 @@ func responseEmitter(em *emitter, sessionID string) wire.EmitToolCall {
 // result would be recorded again on each request.
 func requestEmitter(em *emitter, sessionID string) wire.EmitToolResult {
 	return func(result wire.ToolResult) {
-		if result.ToolCallID != "" && !em.seen.add(result.Protocol+"\x00"+result.ToolCallID) {
+		if result.ToolCallID != "" && !em.seen.add(ResultKey{Protocol: result.Protocol, ToolCallID: result.ToolCallID}.key()) {
 			return
 		}
 		e := event.New(event.SourceGateway, event.KindToolResult, time.Now())

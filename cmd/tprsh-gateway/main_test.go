@@ -305,3 +305,24 @@ func TestParseFlagsRandomSessionIDsDiffer(t *testing.T) {
 		t.Errorf("two generated session ids are equal: %q", a.sessionID)
 	}
 }
+
+func TestLoadPriorResults(t *testing.T) {
+	dir := t.TempDir()
+	var stderr bytes.Buffer
+	if got := loadPriorResults(filepath.Join(dir, "missing.jsonl"), "s", &stderr); got != nil || stderr.Len() != 0 {
+		t.Errorf("missing log: %v %q", got, stderr.String())
+	}
+	log := filepath.Join(dir, "gw.jsonl")
+	content := `{"kind":"tool_result","session_id":"s","protocol":"anthropic","tool_call_id":"toolu_1"}` + "\n" +
+		`{"kind":"tool_result","session_id":"t","protocol":"anthropic","tool_call_id":"toolu_2"}` + "\n"
+	if err := os.WriteFile(log, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadPriorResults(log, "s", &stderr)
+	if len(got) != 1 || got[0] != (proxy.ResultKey{Protocol: "anthropic", ToolCallID: "toolu_1"}) {
+		t.Errorf("prior = %+v", got)
+	}
+	if !strings.Contains(stderr.String(), "1 tool results already in the log") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}

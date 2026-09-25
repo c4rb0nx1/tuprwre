@@ -111,8 +111,12 @@ One JSON object per line. `tool_call_intent` carries `protocol`, `tool_call_id`,
 `tool_name`, `arguments`, `complete` (the protocol's terminating event was seen),
 and `truncated`. `tool_result` carries `tool_call_id` and `result`. Every event
 carries `id`, `time`, `session_id`, `source`, `kind`, `redacted`, and
-`redaction_count`. Results are deduplicated within one gateway process (harnesses
-resend the whole conversation each turn). A final `Stats` line
+`redaction_count`. Results are deduplicated by protocol and `tool_call_id`,
+because harnesses resend the whole conversation each turn. When the gateway
+starts and appends to an existing log, it first reads the `tool_result`
+records already there for the same `--session-id`. A restart mid-conversation
+therefore does not re-record history; it prints a `resuming session` line when
+it does this. A final `Stats` line
 (`EventsEmitted`/`EventsDropped`/`SinkErrors`/`ExtractorErrors`) is printed on
 stderr at shutdown.
 
@@ -143,9 +147,11 @@ also covers effect-event argv recorded by `tprsh-sensor` (see
 - **The gateway sees intent, not effects.** On its own it cannot confirm that
   a tool actually ran, or what it touched on the host. Pair it with
   `tprsh-sensor` ([`sensor.md`](sensor.md)) and reconcile the two logs with
-  `tprsh-report` ([`report.md`](report.md)). The Tetragon adapter is tested
-  against synthetic fixtures only; it has not been run against a live agent.
-- **No dedup across gateway restarts.** Result dedup is per-process only, so a
-  restart mid-conversation can re-record historical tool results.
+  `tprsh-report` ([`report.md`](report.md)). The Tetragon adapter is checked
+  against Tetragon's source and recorded samples, but has not been run
+  against a live agent.
+- **Dedup across restarts needs the same log and session id.** A restarted
+  gateway writing to a new log, or under a new session id, starts with an
+  empty dedup set. The in-process set holds the 10,000 most recent results.
 - Encodings other than `identity`/gzip are forwarded but not parsed (no events
   extracted); extractor errors are counted, never surfaced as payload changes.
