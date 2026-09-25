@@ -32,7 +32,7 @@ func TestParseFlags(t *testing.T) {
 		t.Errorf("defaults = %+v", opts)
 	}
 
-	for _, bad := range [][]string{nil, {"--log", "x"}, {"falco"}, {"tetragon", "extra"}} {
+	for _, bad := range [][]string{nil, {"--log", "x"}, {"falco"}, {"tetragon", "extra"}, {"tetragon", "--root-pid", "-3"}} {
 		if _, err := parseFlags(bad, &bytes.Buffer{}); err == nil {
 			t.Errorf("parseFlags(%q) accepted", bad)
 		}
@@ -58,7 +58,7 @@ func TestRunRecordsFixture(t *testing.T) {
 	if err := run(context.Background(), opts, nil, &stderr); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "emitted=25 invalid=0 sink_errors=0 native_errors=0 ignored=3") {
+	if !strings.Contains(stderr.String(), "emitted=25 invalid=0 sink_errors=0 native_errors=0 ignored=3 outside_subtree=0") {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 	info, err := os.Stat(logPath)
@@ -114,3 +114,36 @@ func TestRunCancelledWhileBlocked(t *testing.T) {
 type countSink struct{ n *int }
 
 func (c countSink) Emit(event.Event) error { *c.n++; return nil }
+
+// TestRunRootPID proves --root-pid keeps only the requested subtree: rooting
+// at the terraform wrapper (bash, pid 4001) keeps bash, terraform and their
+// effects.
+func TestRunRootPID(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "effects.jsonl")
+	opts := &options{
+		adapter:   "tetragon",
+		input:     filepath.Join("..", "..", "internal", "sensor", "tetragon", "testdata", "session.jsonl"),
+		logPath:   logPath,
+		sessionID: "s",
+		rootPID:   4001,
+	}
+	var stderr bytes.Buffer
+	if err := run(context.Background(), opts, nil, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "outside_subtree=20") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		if !bytes.Contains(line, []byte(`"pid":4001`)) && !bytes.Contains(line, []byte(`"pid":4002`)) {
+			t.Errorf("event outside subtree recorded: %s", line)
+		}
+	}
+	if n := bytes.Count(raw, []byte("\n")); n != 5 {
+		t.Errorf("recorded %d events, want 5", n)
+	}
+}

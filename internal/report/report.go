@@ -188,7 +188,7 @@ func buildSession(id string, evs []event.Event, opts Options) *Session {
 			if e.Source == event.SourceSensor {
 				s.Effects = append(s.Effects, &Effect{
 					ID: e.ID, Time: e.Time, Kind: e.Kind, PID: e.Process.PID, ExecID: e.Process.ExecID,
-					Summary: effectSummary(e), ev: e, key: processKey(e.Process),
+					Summary: effectSummary(e), ev: e, key: sensor.ProcessKey(e.Process),
 				})
 			}
 		}
@@ -229,25 +229,6 @@ func (s *Session) count(t rules.Tier) {
 	}
 }
 
-// processKey identifies a process: its exec id, or its pid when the sensor
-// supplies no exec id.
-func processKey(p *event.Process) string {
-	if p.ExecID != "" {
-		return p.ExecID
-	}
-	return fmt.Sprintf("pid:%d", p.PID)
-}
-
-func parentKey(p *event.Process) string {
-	switch {
-	case p.ParentExecID != "":
-		return p.ParentExecID
-	case p.PPID > 0:
-		return fmt.Sprintf("pid:%d", p.PPID)
-	}
-	return ""
-}
-
 // processTree indexes a session's processes.
 type processTree struct {
 	parent map[string]string // key -> parent key
@@ -266,7 +247,7 @@ type processTree struct {
 func newProcessTree(effects []*Effect) *processTree {
 	t := &processTree{parent: map[string]string{}, execs: map[string]*Effect{}, roots: map[string]bool{}, harness: map[string]bool{}}
 	for _, ef := range effects {
-		if pk := parentKey(ef.ev.Process); pk != "" {
+		if pk := sensor.ParentKey(ef.ev.Process); pk != "" {
 			if _, ok := t.parent[ef.key]; !ok {
 				t.parent[ef.key] = pk
 			}

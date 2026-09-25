@@ -46,6 +46,7 @@ type options struct {
 	logPath   string
 	sessionID string
 	noRedact  bool
+	rootPID   int
 }
 
 // parseFlags parses and validates args. Warnings go to stderr.
@@ -61,6 +62,7 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		logPath   = fs.String("log", "", "JSONL effect log (created 0600); default: $XDG_STATE_HOME/tprsh/sensor/<session-id>.jsonl")
 		sessionID = fs.String("session-id", "", "session id stamped on every event, to pair with tprsh-gateway --session-id (default: random)")
 		noRedact  = fs.Bool("no-redact", false, "disable redaction of secret-looking argv values (records raw argv)")
+		rootPID   = fs.Int("root-pid", 0, "record only this process and its descendants (e.g. the harness pid); 0 records everything")
 	)
 	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
 		if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "-help") {
@@ -80,7 +82,10 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
-	opts.input, opts.logPath, opts.sessionID, opts.noRedact = *input, *logPath, *sessionID, *noRedact
+	opts.input, opts.logPath, opts.sessionID, opts.noRedact, opts.rootPID = *input, *logPath, *sessionID, *noRedact, *rootPID
+	if opts.rootPID < 0 {
+		return nil, fmt.Errorf("--root-pid %d: want a positive pid", opts.rootPID)
+	}
 	if opts.sessionID == "" {
 		var b [16]byte
 		if _, err := rand.Read(b[:]); err != nil {
@@ -152,6 +157,14 @@ func run(ctx context.Context, opts *options, stdin io.Reader, stderr io.Writer) 
 	defer sink.Close()
 	fmt.Fprintf(stderr, "tprsh-sensor: adapter %s session %s log %s\n", opts.adapter, opts.sessionID, opts.logPath)
 
+	var out gateway.Sink = sink
+	var subtree *sensor.SubtreeFilter
+	if opts.rootPID > 0 {
+		subtree = sensor.NewSubtreeFilter(opts.rootPID, sink)
+		out = subtree
+		fmt.Fprintf(stderr, "tprsh-sensor: recording only pid %d and its descendants\n", opts.rootPID)
+	}
+
 	s := tetragon.New(in, tetragon.Options{SessionID: opts.sessionID})
 	type outcome struct {
 		st  sensor.Stats
@@ -159,7 +172,7 @@ func run(ctx context.Context, opts *options, stdin io.Reader, stderr io.Writer) 
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		st, err := sensor.Record(ctx, s, sink, sensor.Options{DisableRedaction: opts.noRedact})
+		st, err := sensor.Record(ctx, s, out, sensor.Options{DisableRedaction: opts.noRedact})
 		done <- outcome{st, err}
 	}()
 
@@ -175,8 +188,14 @@ func run(ctx context.Context, opts *options, stdin io.Reader, stderr io.Writer) 
 			res.err = ctx.Err()
 		}
 	}
-	fmt.Fprintf(stderr, "tprsh-sensor: stats emitted=%d invalid=%d sink_errors=%d native_errors=%d ignored=%d\n",
-		res.st.EventsEmitted, res.st.EventsInvalid, res.st.SinkErrors, s.Errors(), s.Ignored())
+	outside := 0
+	if subtree != nil {
+		outside = subtree.Dropped()
+	}
+	// emitted counts events that passed validation, including any the
+	// subtree filter then left out (outside_subtree).
+	fmt.Fprintf(stderr, "tprsh-sensor: stats emitted=%d invalid=%d sink_errors=%d native_errors=%d ignored=%d outside_subtree=%d\n",
+		res.st.EventsEmitted, res.st.EventsInvalid, res.st.SinkErrors, s.Errors(), s.Ignored(), outside)
 	if errors.Is(res.err, context.Canceled) {
 		return nil
 	}

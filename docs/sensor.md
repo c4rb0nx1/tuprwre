@@ -21,6 +21,7 @@ Sensors only observe. They never block, confine, or change what they see.
 | `EffectKinds`, `IsEffect` | The effect kinds a sensor may emit. |
 | `IsSensitivePath` | Fixed, lexical list of credential locations (cloud/cluster configs, SSH private keys, token stores, `.env`, key and keystore files). Used by adapters to classify reads, and by `tprsh-report`. |
 | `ReadLine` | Bounded line reader shared by line-delimited adapters. |
+| `SubtreeFilter`, `ProcessKey`, `ParentKey` | Scope a stream to one process subtree; process identity by exec id, or pid when there is none. |
 
 Adapters wrap each tool's native output. Tetragon (Linux) is implemented
 (below); eslogger (macOS) is planned.
@@ -105,15 +106,31 @@ tprsh-sensor tetragon --input /var/run/cilium/tetragon/tetragon.log --session-id
 | `--input PATH` | Native stream; `-` (default) is stdin. To follow a growing file, pipe `tail -F`. |
 | `--log PATH` | JSONL effect log, created `0600`. Default: `$XDG_STATE_HOME/tprsh/sensor/<session-id>.jsonl`. |
 | `--session-id ID` | Stamped on every event. Default: random. |
+| `--root-pid PID` | Record only that process and its descendants, e.g. the harness. `0` (default) records everything. |
 | `--no-redact` | Record raw argv. Prints a warning. |
 
 The stream is attributed to one session as a whole. On a host running several
-agents, give each its own Tetragon filter, for example by namespace or process
-tree, or leave effects unattributed. Splitting sessions by process tree is not
-implemented yet.
+agents, run one `tprsh-sensor` per agent with `--root-pid`:
+
+```bash
+claude -p "fix the build" &
+tetra getevents -o json | tprsh-sensor tetragon --root-pid $! --session-id "$SID"
+```
+
+`--root-pid` uses `sensor.SubtreeFilter`. A process joins the subtree when:
+
+- its pid is the root pid,
+- its parent is already in the subtree, or
+- its parent pid is the root pid. This covers a root that was exec'd before
+  the stream started.
+
+After the root exits, its pid stops matching, so a later process that reuses
+the pid is not adopted. Only processes seen in the stream can be adopted, so
+start the stream before the agent spawns tools.
 
 On shutdown, `tprsh-sensor` prints a stats line to stderr: `emitted`,
-`invalid`, `sink_errors`, `native_errors`, `ignored`.
+`invalid`, `sink_errors`, `native_errors`, `ignored`, and `outside_subtree`
+(events left out by `--root-pid`; these still count in `emitted`).
 
 ## Effect event schema
 
