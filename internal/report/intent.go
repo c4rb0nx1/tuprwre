@@ -166,10 +166,10 @@ func (f intentFacts) commandLines() []string {
 }
 
 // classify applies the rule set to the intent.
-func (f intentFacts) classify(workspace string) rules.Result {
+func (f intentFacts) classify(cfg *rules.Config, workspace string) rules.Result {
 	res := rules.Result{Verdict: rules.GreenVerdict}
 	for _, c := range f.commands(workspace) {
-		r := rules.Classify(c, workspace)
+		r := cfg.Classify(c, workspace)
 		res.Verdict = rules.Worse(res.Verdict, r.Verdict)
 		res.CredentialPaths = append(res.CredentialPaths, r.CredentialPaths...)
 		res.Egress = res.Egress || r.Egress

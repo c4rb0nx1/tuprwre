@@ -379,3 +379,50 @@ func TestEmptySessionIsGreen(t *testing.T) {
 		t.Errorf("worst = %q", s.Worst)
 	}
 }
+
+// TestTaintWindow proves egress long after the most recent credential read
+// is not red when a window is set, while the default taints the session.
+func TestTaintWindow(t *testing.T) {
+	gitConnect := func(r *Report) *Effect { return effectBy(t, session(t, r, "sess-tg-1"), event.KindNetConnect, 4008) }
+	curlConnect := func(r *Report) *Effect { return effectBy(t, session(t, r, "sess-tg-1"), event.KindNetConnect, 4006) }
+
+	r := build(t, Options{TaintWindow: time.Second}, gatewayFixture, tetragonFixture)
+	// curl connects 0.5s after the read: still red. git connects 2.8s after.
+	if ef := curlConnect(r); ef.Rule != rules.RuleCredentialThenEgress || !strings.Contains(ef.Reason, "08.600") {
+		t.Errorf("curl connect = %+v", ef.Verdict)
+	}
+	if ef := gitConnect(r); ef.Tier != rules.Green {
+		t.Errorf("git connect with 1s window = %+v", ef.Verdict)
+	}
+	if ef := gitConnect(build(t, Options{}, gatewayFixture, tetragonFixture)); ef.Rule != rules.RuleCredentialThenEgress {
+		t.Errorf("git connect with no window = %+v", ef.Verdict)
+	}
+}
+
+// TestIgnorePathsAndRulesConfig proves ignored write prefixes leave the
+// covert list, and a custom rules config reaches both intents and execs.
+func TestIgnorePathsAndRulesConfig(t *testing.T) {
+	cfg := &rules.Config{ProtectedBranches: []string{"stable"}}
+	r := build(t, Options{Rules: cfg, IgnorePaths: []string{"/home/agent/work/"}}, gatewayFixture, contractSession)
+	s := session(t, r, "sess-fixture-2")
+	w := effectBy(t, s, event.KindFileWrite, 3005)
+	if !w.Ignored || w.Covert {
+		t.Errorf("write under ignored prefix: ignored=%v covert=%v", w.Ignored, w.Covert)
+	}
+	if len(s.Covert) != 7 {
+		t.Errorf("covert = %d, want 7", len(s.Covert))
+	}
+	// git push --force origin main is no longer protected under cfg.
+	if git := effectBy(t, s, event.KindExec, 3006); git.Rule != rules.RuleGitForcePush {
+		t.Errorf("git exec = %+v", git.Verdict)
+	}
+	gw := session(t, build(t, Options{Rules: cfg}, gatewayFixture), "sess-tg-1")
+	for _, in := range gw.Intents {
+		if in.ToolCallID == "toolu_04" && in.Rule != rules.RuleGitForcePush {
+			t.Errorf("toolu_04 = %+v", in.Verdict)
+		}
+	}
+	if ignoredPath("/a/bc", []string{"/a/b"}) || !ignoredPath("/a/b/c", []string{"/a/b/"}) || ignoredPath("/x", []string{""}) {
+		t.Error("ignoredPath")
+	}
+}

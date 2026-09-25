@@ -37,6 +37,18 @@ type Options struct {
 	// and recording skew between the gateway and the sensor. Default
 	// DefaultSlack.
 	Slack time.Duration
+	// Rules configures the fixed rules (protected branches, prod
+	// contexts). Nil means rules.DefaultConfig.
+	Rules *rules.Config
+	// IgnorePaths are directory prefixes whose file writes are expected
+	// background activity (e.g. a harness's own state or cache
+	// directories). Such writes are marked Ignored and are never covert
+	// candidates. Credential reads are never ignored.
+	IgnorePaths []string
+	// TaintWindow bounds the credential-then-egress rule: egress is red
+	// only within this long after the most recent credential read. Zero
+	// means the rest of the session.
+	TaintWindow time.Duration
 }
 
 // Report is the reconciled view of all sessions.
@@ -123,6 +135,8 @@ type Effect struct {
 	Harness bool `json:"harness,omitempty"`
 	// Loopback marks a connection to a loopback address.
 	Loopback bool `json:"loopback,omitempty"`
+	// Ignored marks a file write under Options.IgnorePaths.
+	Ignored bool `json:"ignored,omitempty"`
 	// Covert marks a covert-action candidate.
 	Covert bool `json:"covert,omitempty"`
 	rules.Verdict
@@ -140,6 +154,9 @@ func Build(events []event.Event, st LoadStats, opts Options) *Report {
 	}
 	if opts.Slack <= 0 {
 		opts.Slack = DefaultSlack
+	}
+	if opts.Rules == nil {
+		opts.Rules = &rules.DefaultConfig
 	}
 	bySession := map[string][]event.Event{}
 	first := map[string]time.Time{}
@@ -208,7 +225,7 @@ func buildSession(id string, evs []event.Event, opts Options) *Session {
 	}
 
 	attribute(s, tree, opts)
-	classify(s)
+	classify(s, opts)
 
 	for _, in := range s.Intents {
 		s.count(in.Tier)
@@ -379,7 +396,8 @@ func attribute(s *Session, tree *processTree, opts Options) {
 		ef.Root = ef.Kind == event.KindExec && tree.roots[ef.key] && ef.Attribution == nil
 		ef.Harness = tree.harness[ef.key] && ef.Kind != event.KindExec
 		ef.Loopback = ef.Kind == event.KindNetConnect && isLoopback(ef.ev.Net.DstAddr)
-		ef.Covert = ef.Attribution == nil && !ef.Root && !ef.Loopback && ef.Kind != event.KindProcExit
+		ef.Ignored = ef.Kind == event.KindFileWrite && ignoredPath(ef.ev.File.Path, opts.IgnorePaths)
+		ef.Covert = ef.Attribution == nil && !ef.Root && !ef.Loopback && !ef.Ignored && ef.Kind != event.KindProcExit
 		if ef.Attribution != nil {
 			if in := byCall[ef.Attribution.ToolCallID]; in != nil {
 				in.Effects++
@@ -466,9 +484,9 @@ func matchByMention(ef *Effect, cands []*Intent) *Attribution {
 	return nil
 }
 
-// classify applies the fixed rules, then the cross-event rule: once a
-// session has read a credential, any later egress is red.
-func classify(s *Session) {
+// classify applies the fixed rules, then the cross-event rule: after a
+// credential read, later egress is red (within Options.TaintWindow, when set).
+func classify(s *Session, opts Options) {
 	type item struct {
 		t        time.Time
 		res      *rules.Result
@@ -478,37 +496,61 @@ func classify(s *Session) {
 	}
 	var items []item
 	for _, in := range s.Intents {
-		in.res = in.facts.classify(s.Workspace)
+		in.res = in.facts.classify(opts.Rules, s.Workspace)
 		in.Verdict = in.res.Verdict
 		items = append(items, item{in.Time, &in.res, &in.Verdict, len(in.res.CredentialPaths) > 0, in.res.Egress})
 	}
 	for _, ef := range s.Effects {
-		ef.res = classifyEffect(ef, s.Workspace)
+		ef.res = classifyEffect(ef, opts.Rules, s.Workspace)
 		ef.Verdict = ef.res.Verdict
 		egress := ef.res.Egress || (ef.Kind == event.KindNetConnect && !ef.Loopback)
 		items = append(items, item{ef.Time, &ef.res, &ef.Verdict, len(ef.res.CredentialPaths) > 0, egress})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].t.Before(items[j].t) })
 
-	var taint *item
+	// first and last are the earliest and the most recent credential reads
+	// seen so far. Without a window the whole rest of the session is
+	// tainted and the first read is cited; with one, only egress within
+	// the window after the most recent read is.
+	var first, last *item
 	for i := range items {
 		it := &items[i]
-		if taint != nil && it.egress && it.t.After(taint.t) {
-			*it.verdict = rules.Worse(*it.verdict, rules.Verdict{Tier: rules.Red, Rule: rules.RuleCredentialThenEgress,
-				Reason: "network egress after credential read of " + taint.res.CredentialPaths[0] + " at " + taint.t.UTC().Format(timeFormat)})
+		if last != nil && it.egress && it.t.After(last.t) {
+			cause := first
+			if opts.TaintWindow > 0 {
+				cause = last
+			}
+			if opts.TaintWindow <= 0 || it.t.Sub(last.t) <= opts.TaintWindow {
+				*it.verdict = rules.Worse(*it.verdict, rules.Verdict{Tier: rules.Red, Rule: rules.RuleCredentialThenEgress,
+					Reason: "network egress after credential read of " + cause.res.CredentialPaths[0] + " at " + cause.t.UTC().Format(timeFormat)})
+			}
 		}
-		if taint == nil && it.credRead {
-			taint = it
+		if it.credRead {
+			if first == nil {
+				first = it
+			}
+			last = it
 		}
 	}
 }
 
+// ignoredPath reports whether p lies under one of the prefixes.
+func ignoredPath(p string, prefixes []string) bool {
+	for _, pre := range prefixes {
+		pre = strings.TrimSuffix(path.Clean(pre), "/")
+		if pre != "" && pre != "." && (p == pre || strings.HasPrefix(p, pre+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyEffect applies the rules to one effect.
-func classifyEffect(ef *Effect, workspace string) rules.Result {
+func classifyEffect(ef *Effect, cfg *rules.Config, workspace string) rules.Result {
 	switch ef.Kind {
 	case event.KindExec:
 		p := ef.ev.Process
-		return rules.Classify(rules.Command{Argv: p.Argv, Cwd: p.Cwd}, workspace)
+		return cfg.Classify(rules.Command{Argv: p.Argv, Cwd: p.Cwd}, workspace)
 	case event.KindFileReadSensitive:
 		return rules.Result{
 			Verdict:         rules.Verdict{Tier: rules.Yellow, Rule: rules.RuleCredentialRead, Reason: "read of credential file " + ef.ev.File.Path},

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/c4rb0nx1/tuprwre/internal/report"
@@ -33,6 +34,9 @@ type options struct {
 	failOn    rules.Tier
 	window    time.Duration
 	slack     time.Duration
+	taint     time.Duration
+	ignore    []string
+	rules     rules.Config
 }
 
 func parseFlags(args []string, stderr io.Writer) (*options, error) {
@@ -48,11 +52,35 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		failOn    = fs.String("fail-on", "", `exit with status 3 when any item reaches this tier ("yellow" or "red")`)
 		window    = fs.Duration("window", report.DefaultWindow, "how long after a tool call with no recorded result its effects may occur")
 		slack     = fs.Duration("slack", report.DefaultSlack, "clock skew tolerated between gateway and sensor timestamps")
+		taint     = fs.Duration("taint-window", 0, "credential-then-egress: only egress within this long after a credential read is red (0: rest of the session)")
+		ignore    []string
+		branches  []string
+		prodCtx   []string
 	)
+	fs.Func("ignore-path", "directory whose file writes are expected background activity, never covert (repeatable)", func(v string) error {
+		ignore = append(ignore, v)
+		return nil
+	})
+	fs.Func("protected-branch", `protected branch name, trailing "*" for a prefix (repeatable; replaces the defaults `+
+		strings.Join(rules.DefaultConfig.ProtectedBranches, ",")+")", func(v string) error {
+		branches = append(branches, v)
+		return nil
+	})
+	fs.Func("prod-context", `case-insensitive substring marking a kubectl context as production (repeatable; replaces the default "prod")`, func(v string) error {
+		prodCtx = append(prodCtx, v)
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	opts := &options{files: fs.Args(), workspace: *workspace, json: *asJSON, window: *window, slack: *slack}
+	opts := &options{files: fs.Args(), workspace: *workspace, json: *asJSON, window: *window, slack: *slack,
+		taint: *taint, ignore: ignore, rules: rules.DefaultConfig}
+	if len(branches) > 0 {
+		opts.rules.ProtectedBranches = branches
+	}
+	if len(prodCtx) > 0 {
+		opts.rules.ProdContexts = prodCtx
+	}
 	if len(opts.files) == 0 {
 		fs.Usage()
 		return nil, errors.New("no log files given")
@@ -63,8 +91,8 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 	default:
 		return nil, fmt.Errorf("--fail-on %q: want yellow or red", *failOn)
 	}
-	if opts.window <= 0 || opts.slack < 0 {
-		return nil, errors.New("--window must be positive and --slack non-negative")
+	if opts.window <= 0 || opts.slack < 0 || opts.taint < 0 {
+		return nil, errors.New("--window must be positive; --slack and --taint-window non-negative")
 	}
 	return opts, nil
 }
@@ -105,7 +133,14 @@ func run(opts *options, stdin io.Reader, stdout io.Writer) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rep := report.Build(events, st, report.Options{Workspace: opts.workspace, Window: opts.window, Slack: opts.slack})
+	cfg := opts.rules
+	if cfg.ProtectedBranches == nil && cfg.ProdContexts == nil {
+		cfg = rules.DefaultConfig
+	}
+	rep := report.Build(events, st, report.Options{
+		Workspace: opts.workspace, Window: opts.window, Slack: opts.slack,
+		Rules: &cfg, IgnorePaths: opts.ignore, TaintWindow: opts.taint,
+	})
 	if opts.json {
 		err = report.WriteJSON(stdout, rep)
 	} else {

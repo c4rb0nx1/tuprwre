@@ -40,6 +40,10 @@ tprsh-report --json --fail-on red gw.jsonl fx.jsonl   # machine-readable; exit 3
 | `--fail-on yellow\|red` | Exit `3` when any item reaches that tier. |
 | `--window DUR` | For a tool call with no recorded result, how long afterwards its effects may occur. Default `10m`. |
 | `--slack DUR` | Clock skew tolerated between gateway and sensor timestamps. Default `2s`. |
+| `--taint-window DUR` | `credential-then-egress` fires only for egress within this long after the most recent credential read. Default `0`: the rest of the session. |
+| `--ignore-path DIR` | File writes under `DIR` are expected background activity (e.g. a harness's own state or cache directory). They are shown as `[ignored path]` and are never covert candidates. Repeatable. Credential reads are never ignored. |
+| `--protected-branch NAME` | Protected branch; a trailing `*` matches any suffix (`release/*`). Repeatable; replaces the default list. |
+| `--prod-context SUBSTR` | Case-insensitive substring marking a kubectl context as production. Repeatable; replaces the default `prod`. |
 
 Events are grouped by `session_id`; events without one go into session
 `(none)`. Records with the same `id` are loaded once, so passing a log twice or
@@ -86,8 +90,12 @@ the harness, and its children stay ordinary processes. Effects of the harness
 process itself are labelled `(by the harness process)`.
 
 **Covert candidates** are unlinked effects of kind `exec`, `file_write`,
-`file_read_sensitive`, or `net_connect`. Session-root execs, `proc_exit`, and
-connections to loopback (the harness talking to the gateway) are excluded.
+`file_read_sensitive`, or `net_connect`. These are excluded:
+
+- session-root execs
+- `proc_exit` events
+- connections to loopback (the harness talking to the gateway)
+- writes under `--ignore-path`
 
 ## Rules (`internal/rules`)
 
@@ -98,9 +106,9 @@ arguments) and to `exec` effects (argv and cwd).
 | Rule | Tier | Matches |
 |---|---|---|
 | `iac-apply` | red | `terraform`/`tofu apply\|destroy`, `terragrunt [run-all] apply\|destroy` |
-| `kubectl-prod` | red | `kubectl delete\|apply` with `--context` containing `prod` |
+| `kubectl-prod` | red | `kubectl delete\|apply` with a `--context` containing `prod` (see `--prod-context`) |
 | `kubectl-context-unknown` | yellow | `kubectl delete\|apply` without `--context` |
-| `git-force-push-protected` | red | force push (`-f`, `--force`, `--force-with-lease`, `+refspec`, `--mirror`) to `main`, `master`, `trunk`, `develop`, `prod`, `production`, `release/*`, `release-*` |
+| `git-force-push-protected` | red | force push (`-f`, `--force`, `--force-with-lease`, `+refspec`, `--mirror`) to a protected branch. The defaults are `main`, `master`, `trunk`, `develop`, `prod`, `production`, `release/*`, and `release-*` (see `--protected-branch`). |
 | `git-delete-protected` | red | `git push --delete` / `:branch` of a protected branch |
 | `git-force-push` | yellow | force push to another branch, or the branch isn't named |
 | `rm-outside-workspace` | red | an `rm` operand outside the workspace (`~`/`$HOME`, `..` escapes, absolute paths elsewhere). `/tmp`, `/var/tmp`, and `/dev/shm` contents are allowed. With no workspace known, only `/`, system directories, and home paths are red. |
@@ -123,12 +131,15 @@ conservative mode.
 - **Shell parsing is best-effort.** Variables, globs, aliases, functions, and
   scripts in files are not evaluated. `bash script.sh` is classified as
   `bash`, not by the script's contents.
-- **Credential taint is session-wide.** After the first credential read,
+- **Credential taint is session-wide by default.** After a credential read,
   every later egress in the session is red, including legitimate traffic such
-  as `git push`.
+  as `git push`. `--taint-window` narrows this; taint is still not tracked
+  per process, because a covert read-then-send usually runs in two sibling
+  processes (`cat`, then `curl`).
 - **Harness writes are noisy.** Files the harness writes for itself (state,
-  caches) are covert candidates unless a tool call names them. They are
-  labelled `(by the harness process)`.
+  caches) are covert candidates unless a tool call names them or they fall
+  under `--ignore-path`. They are labelled `(by the harness process)`. No
+  harness-specific paths are built in.
 - The rule set is intentionally small, and tiers are not policy: nothing is
   promoted into enforcement automatically.
 

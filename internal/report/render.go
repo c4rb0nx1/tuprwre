@@ -120,6 +120,8 @@ func link(ef *Effect) string {
 		return "[session root]"
 	case ef.Loopback:
 		return "[loopback]"
+	case ef.Ignored:
+		return "[ignored path]"
 	case ef.Covert:
 		return "[UNMATCHED]"
 	}

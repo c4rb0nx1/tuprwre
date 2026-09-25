@@ -12,6 +12,9 @@
 //     apply or destroy, kubectl delete/apply on a prod context, force push or
 //     delete of a protected branch, rm outside the workspace, credential
 //     read followed by network egress).
+//
+// Protected branches and prod contexts are configurable (Config); the
+// package-level functions use DefaultConfig.
 package rules
 
 import (
@@ -85,15 +88,44 @@ type Result struct {
 	Egress bool `json:"egress,omitempty"`
 }
 
+// Config holds the site-specific inputs of the rule set.
+type Config struct {
+	// ProtectedBranches are branch names that must not be force-pushed or
+	// deleted. A trailing "*" matches any suffix ("release/*"). A leading
+	// "refs/heads/" on the pushed ref is ignored.
+	ProtectedBranches []string
+	// ProdContexts are case-insensitive substrings that mark a kubectl
+	// context as production.
+	ProdContexts []string
+}
+
+// DefaultConfig is the configuration used by the package-level functions.
+var DefaultConfig = Config{
+	ProtectedBranches: []string{"main", "master", "trunk", "develop", "prod", "production", "release/*", "release-*"},
+	ProdContexts:      []string{"prod"},
+}
+
+// Classify applies the rule set to a command using DefaultConfig.
+func Classify(c Command, workspace string) Result { return DefaultConfig.Classify(c, workspace) }
+
+// ClassifyScript classifies each command of a shell script using
+// DefaultConfig.
+func ClassifyScript(script, cwd, workspace string) Result {
+	return DefaultConfig.ClassifyScript(script, cwd, workspace)
+}
+
+// ProtectedBranch reports whether DefaultConfig protects branch b.
+func ProtectedBranch(b string) bool { return DefaultConfig.ProtectedBranch(b) }
+
 // Classify applies the rule set to a command. Wrappers and "sh -c" scripts
 // are expanded first (see Expand), and the worst verdict of the resulting
 // simple commands wins. workspace is the agent's workspace directory; ""
 // means unknown, which makes the rm rule conservative.
-func Classify(c Command, workspace string) Result {
+func (cfg *Config) Classify(c Command, workspace string) Result {
 	var res Result
 	res.Verdict = GreenVerdict
 	for _, sc := range Expand(c) {
-		r := classifySimple(sc, workspace)
+		r := cfg.classifySimple(sc, workspace)
 		res.Verdict = Worse(res.Verdict, r.Verdict)
 		res.CredentialPaths = append(res.CredentialPaths, r.CredentialPaths...)
 		res.Egress = res.Egress || r.Egress
@@ -106,12 +138,12 @@ func Classify(c Command, workspace string) Result {
 }
 
 // ClassifyScript parses a shell script and classifies each command in it.
-func ClassifyScript(script, cwd, workspace string) Result {
+func (cfg *Config) ClassifyScript(script, cwd, workspace string) Result {
 	var res Result
 	res.Verdict = GreenVerdict
 	cmds := ParseScript(script, cwd)
 	for _, c := range cmds {
-		r := Classify(c, workspace)
+		r := cfg.Classify(c, workspace)
 		res.Verdict = Worse(res.Verdict, r.Verdict)
 		res.CredentialPaths = append(res.CredentialPaths, r.CredentialPaths...)
 		res.Egress = res.Egress || r.Egress
@@ -124,7 +156,7 @@ func ClassifyScript(script, cwd, workspace string) Result {
 }
 
 // classifySimple applies the rules to one already-expanded simple command.
-func classifySimple(c Command, workspace string) Result {
+func (cfg *Config) classifySimple(c Command, workspace string) Result {
 	res := Result{Verdict: GreenVerdict}
 	if len(c.Argv) == 0 {
 		return res
@@ -147,9 +179,9 @@ func classifySimple(c Command, workspace string) Result {
 	case "terraform", "tofu", "terragrunt":
 		v = iacRule(name, args)
 	case "kubectl":
-		v = kubectlRule(args)
+		v = cfg.kubectlRule(args)
 	case "git":
-		v = gitRule(args)
+		v = cfg.gitRule(args)
 	case "rm":
 		v = rmRule(args, c.Cwd, workspace)
 	}
@@ -236,7 +268,7 @@ var kubectlValueFlags = map[string]bool{
 	"-k": true, "--kustomize": true,
 }
 
-func kubectlRule(args []string) Verdict {
+func (cfg *Config) kubectlRule(args []string) Verdict {
 	i := firstPositional(args, kubectlValueFlags)
 	if i < 0 {
 		return GreenVerdict
@@ -249,7 +281,7 @@ func kubectlRule(args []string) Verdict {
 	switch {
 	case !found:
 		return Verdict{Yellow, RuleKubectlContextUnknown, "kubectl " + verb + " without --context runs against the current context"}
-	case strings.Contains(strings.ToLower(ctx), "prod"):
+	case cfg.prodContext(ctx):
 		return Verdict{Red, RuleKubectlProd, "kubectl " + verb + " on prod context " + ctx}
 	}
 	return GreenVerdict
@@ -271,22 +303,36 @@ func flagValue(args []string, flag string) (string, bool) {
 	return "", false
 }
 
-// ProtectedBranch reports whether a branch name is protected by default:
-// main, master, trunk, develop, prod, production, and release branches.
-func ProtectedBranch(b string) bool {
-	b = strings.TrimPrefix(b, "refs/heads/")
-	switch b {
-	case "main", "master", "trunk", "develop", "prod", "production":
-		return true
+func (cfg *Config) prodContext(ctx string) bool {
+	lower := strings.ToLower(ctx)
+	for _, p := range cfg.ProdContexts {
+		if p != "" && strings.Contains(lower, strings.ToLower(p)) {
+			return true
+		}
 	}
-	return strings.HasPrefix(b, "release/") || strings.HasPrefix(b, "release-")
+	return false
+}
+
+// ProtectedBranch reports whether branch b matches cfg.ProtectedBranches.
+func (cfg *Config) ProtectedBranch(b string) bool {
+	b = strings.TrimPrefix(b, "refs/heads/")
+	for _, p := range cfg.ProtectedBranches {
+		if prefix, ok := strings.CutSuffix(p, "*"); ok {
+			if strings.HasPrefix(b, prefix) && len(b) > len(prefix) {
+				return true
+			}
+		} else if b == p {
+			return true
+		}
+	}
+	return false
 }
 
 var gitGlobalValueFlags = map[string]bool{"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true}
 
 var gitPushValueFlags = map[string]bool{"-o": true, "--push-option": true, "--repo": true, "--receive-pack": true, "--exec": true}
 
-func gitRule(args []string) Verdict {
+func (cfg *Config) gitRule(args []string) Verdict {
 	i := firstPositional(args, gitGlobalValueFlags)
 	if i < 0 || args[i] != "push" {
 		return GreenVerdict
@@ -337,9 +383,9 @@ func gitRule(args []string) Verdict {
 			dst = src
 		}
 		switch {
-		case (del || (hasColon && src == "")) && ProtectedBranch(dst):
+		case (del || (hasColon && src == "")) && cfg.ProtectedBranch(dst):
 			return Verdict{Red, RuleGitDeleteProtected, "git push deletes protected branch " + dst}
-		case (force || plus) && ProtectedBranch(dst):
+		case (force || plus) && cfg.ProtectedBranch(dst):
 			return Verdict{Red, RuleGitForcePushProtected, "git push --force to protected branch " + dst}
 		}
 	}

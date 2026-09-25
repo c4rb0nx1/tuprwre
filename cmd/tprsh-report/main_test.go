@@ -77,3 +77,36 @@ func TestRunMissingFile(t *testing.T) {
 		t.Error("missing file accepted")
 	}
 }
+
+func TestParseFlagsRulesAndPrecision(t *testing.T) {
+	opts, err := parseFlags([]string{"--protected-branch", "stable", "--protected-branch", "hotfix/*", "--prod-context", "live",
+		"--ignore-path", "/home/a/.cache", "--taint-window", "5m", "x"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(opts.rules.ProtectedBranches, ",") != "stable,hotfix/*" || strings.Join(opts.rules.ProdContexts, ",") != "live" ||
+		strings.Join(opts.ignore, ",") != "/home/a/.cache" || opts.taint != 5*time.Minute {
+		t.Errorf("opts = %+v", opts)
+	}
+	defaults, err := parseFlags([]string{"x"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaults.rules.ProtectedBranches) != len(rules.DefaultConfig.ProtectedBranches) {
+		t.Errorf("default branches = %v", defaults.rules.ProtectedBranches)
+	}
+	if _, err := parseFlags([]string{"--taint-window", "-1s", "x"}, &bytes.Buffer{}); err == nil {
+		t.Error("negative taint window accepted")
+	}
+
+	// A custom protected branch changes the verdict end to end.
+	var out bytes.Buffer
+	opts.files = []string{gatewayLog}
+	opts.json = true
+	if _, err := run(opts, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), rules.RuleGitForcePushProtected) {
+		t.Error("main still protected with --protected-branch stable")
+	}
+}

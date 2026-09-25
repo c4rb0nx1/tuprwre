@@ -184,3 +184,29 @@ func TestParseScriptDepthBounded(t *testing.T) {
 	argv := []string{"sh", "-c", strings.Repeat("sh -c ", 30) + "ls"}
 	_ = Expand(Command{Argv: argv})
 }
+
+func TestConfigOverrides(t *testing.T) {
+	cfg := Config{ProtectedBranches: []string{"stable", "hotfix/*"}, ProdContexts: []string{"LIVE"}}
+	cases := []struct {
+		script string
+		tier   Tier
+		rule   string
+	}{
+		{"git push -f origin stable", Red, RuleGitForcePushProtected},
+		{"git push -f origin hotfix/1", Red, RuleGitForcePushProtected},
+		{"git push -f origin hotfix/", Yellow, RuleGitForcePush},
+		{"git push -f origin main", Yellow, RuleGitForcePush},
+		{"kubectl --context eu-live-1 delete ns x", Red, RuleKubectlProd},
+		{"kubectl --context prod delete ns x", Green, ""},
+	}
+	for _, c := range cases {
+		got := cfg.ClassifyScript(c.script, "/w", "/w")
+		if got.Tier != c.tier || got.Rule != c.rule {
+			t.Errorf("%q = %s/%s, want %s/%s", c.script, got.Tier, got.Rule, c.tier, c.rule)
+		}
+	}
+	var empty Config
+	if got := empty.ClassifyScript("git push -f origin main", "", ""); got.Rule != RuleGitForcePush {
+		t.Errorf("empty config: %+v", got)
+	}
+}
