@@ -41,7 +41,7 @@ tprsh-report --json --fail-on red gw.jsonl fx.jsonl   # machine-readable; exit 3
 | `--window DUR` | For a tool call with no recorded result, how long afterwards its effects may occur. Default `10m`. |
 | `--slack DUR` | Clock skew tolerated between gateway and sensor timestamps. Default `2s`. |
 | `--taint-window DUR` | `credential-then-egress` fires only for egress within this long after the most recent credential read. Default `0`: the rest of the session. |
-| `--ignore-path DIR` | File writes under `DIR` are expected background activity (e.g. a harness's own state or cache directory). They are shown as `[ignored path]` and are never covert candidates. Repeatable. Credential reads are never ignored. |
+| `--ignore-path DIR` | Absolute `DIR`. File writes under it are expected background activity (e.g. a harness's own state or cache directory). They are shown as `[ignored path]` and are never covert candidates. Repeatable. Credential reads are never ignored. |
 | `--protected-branch NAME` | Protected branch; a trailing `*` matches any suffix (`release/*`). Repeatable; replaces the default list. |
 | `--prod-context SUBSTR` | Case-insensitive substring marking a kubectl context as production. Repeatable; replaces the default `prod`. |
 

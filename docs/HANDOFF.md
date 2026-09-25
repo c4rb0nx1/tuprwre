@@ -65,7 +65,7 @@ Verified via `git log` on `feat/tprsh-gateway`:
 - `a9f6c61` — `tprsh-gateway` binary and e2e smoke test.
 - `12ad852` — default log path, e2e strictness, docs.
 
-Cloud session (all four handoff tasks):
+Cloud session, first round (the four original handoff tasks):
 
 - `1633dca`: `internal/sensor` — `Sensor` interface, `Record` (validate +
   default-on redaction + `Stats`), `Validate` contract, `Replay` reference
@@ -73,56 +73,65 @@ Cloud session (all four handoff tasks):
   to `event.Event`; schema stays `"0"`. Argv redaction in `DefaultRedactor`.
   Synthetic contract fixtures.
 - `01b2443`: `internal/sensor/tetragon` adapter, `sensor.IsSensitivePath`,
-  and the `cmd/tprsh-sensor` binary. Tested against a synthetic export with
-  a golden output; **not verified against a live Tetragon agent**. Also an
-  illustrative, unverified TracingPolicy (`docs/tetragon/tprsh-effects.yaml`).
+  and the `cmd/tprsh-sensor` binary; example TracingPolicy.
 - `95fc84e`: `internal/rules` (fixed rule set + shell lexer), `internal/report`
-  and `cmd/tprsh-report`. Links effects to tool calls, lists covert
-  candidates, and gives would-be tiers. Also `scripts/report-e2e.sh`
-  (fixture-driven, no live sensor).
-- Docs: `docs/sensor.md`, `docs/report.md`; `docs/gateway.md` describes the
-  three-piece pipeline.
+  and `cmd/tprsh-report`, plus `scripts/report-e2e.sh`.
+- `e2f2e99`: docs (`docs/sensor.md`, `docs/report.md`, pipeline overview in
+  `docs/gateway.md`).
+
+Cloud session, second round (the follow-ups listed after round one):
+
+- `18f3741`: Tetragon mapping checked against Tetragon's source
+  (`cilium/tetragon` a58fbc7) and its recorded documentation samples; fixed
+  argv decoding (Tetragon quotes arguments that contain a space), rootless
+  file paths, syscall read/write hooks, 64-bit mask arguments, `errorCWD`,
+  and legacy `process_connect`; keystores count as credentials. All 34
+  upstream samples translate (opt-in `TestUpstreamRecordedSamples`, with
+  `TPRSH_TETRAGON_SRC`). The policy uses `Mask` and validates with Tetragon's
+  own loader.
+- `27d3a86`: `tprsh-sensor --root-pid` (`sensor.SubtreeFilter`) scopes a
+  host-wide stream to one agent's process subtree.
+- `13f016d`: report precision — `rules.Config` (`--protected-branch`,
+  `--prod-context`), `--ignore-path` for harness self-writes,
+  `--taint-window` for credential-then-egress.
+- `6afe535`: gateway dedup across restarts (it seeds from the log it appends
+  to, for the same session id).
+- `f65b00f`: logs keep `<`, `>`, `&` literal (no HTML escaping).
 
 Capabilities landed: record-only gateway; three wire extractors; request-side
-`tool_result` extraction with dedup; async sink with `Stats`; drain-safe bounded
-`Close`; default-on pattern redaction; `cmd/tprsh-gateway` binary; real-pi e2e.
+`tool_result` extraction with dedup (also across restarts); async sink with
+`Stats`; drain-safe bounded `Close`; default-on pattern redaction (payloads
+and effect argv); Tetragon effect adapter; `tprsh-sensor`; `tprsh-report` with
+fixed rules; real-pi gateway e2e and fixture-driven pipeline e2e.
 
-Three independent reviews; last verdict: **no P0/P1**.
-
-Residuals: redaction is pattern-based; re-marshal HTML-escapes `<`/`>`/`&`; no
-dedup across restarts; an explicit `--log` parent dir is not chmod'ed.
+Residuals: redaction is pattern-based; an explicit `--log` parent dir is not
+chmod'ed (by design: it may be shared, like `/tmp`); report linking is
+heuristic (see `docs/report.md` Limits).
 
 ## Next tasks
 
-The four original cloud tasks are done (see above and `docs/sensor.md`,
-`docs/report.md`). Candidates for the next session, roughly in order:
-
-1. **Live Tetragon verification** on a Linux host with eBPF. Record a real
-   export, compare it with the synthetic fixture shape, and fix the mapping.
-   Open questions: does `process.arguments` quote arguments that contain
-   spaces? Does `process_exit.status` hold the exit code or the raw wait
-   status? Do the example policy's `Postfix`/`Equal` selectors behave as
-   written? Commit a *redacted* real sample as a new fixture.
-2. **Session attribution by process tree** in `tprsh-sensor` (e.g. a
-   `--root-pid` or cgroup filter), so one host-wide Tetragon stream can be
-   split across several agents instead of stamping one `--session-id`.
-3. **Report precision**: per-process (not session-wide) credential taint; an
-   allowlist for harness self-writes (state/cache dirs); configurable
-   protected branches, prod-context pattern and workspace per session.
-4. **Dedup across gateway restarts**; chmod of an explicit `--log` parent
-   (gateway residuals above).
+1. **Live Tetragon run.** In the cloud VM, Tetragon and its BPF objects build
+   from source (`make tetragon-bpf LOCAL_CLANG=1 && make tetragon tetra`,
+   clang 18, root, BTF present). Starting the agent needs bpffs/tracefs
+   mounted (`/sys/fs/bpf`, `/sys/kernel/tracing`), and that mount was **not
+   permitted** in the cloud session. On a Linux host where it is allowed:
+   1. Run `tetragon --bpf-lib bpf/objs --export-filename out.json
+      --tracing-policy docs/tetragon/tprsh-effects.yaml`.
+   2. Drive a harness through `tprsh-gateway`.
+   3. Pipe the export through `tprsh-sensor tetragon --root-pid <harness pid>`.
+   4. Run `tprsh-report`.
+   5. Commit a *redacted* real export as a fixture.
+2. **eslogger adapter** (local-only: macOS root + Full Disk Access). Implement
+   `sensor.Sensor` and satisfy `sensor.Validate`; model the tests on
+   `internal/sensor/tetragon`.
+3. **Report**: per-session workspace overrides; linking effects by cwd as well
+   as by time.
+4. Dogfooding with real keys; subscription-auth test (local).
 
 Scripts:
 
 - `scripts/gateway-e2e.sh` needs the `pi` CLI. Cloud runs used `ALLOW_FAKE=1`.
 - `scripts/report-e2e.sh` is fixture-only and needs just Go and `python3`.
-
-Local-only (not cloud):
-
-- `eslogger` adapter (needs macOS root + Full Disk Access). Implement
-  `sensor.Sensor` and satisfy `sensor.Validate`.
-- Dogfooding with real keys.
-- Subscription-auth test.
 
 ## Explicitly not doing
 

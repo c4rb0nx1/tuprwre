@@ -57,7 +57,10 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 		branches  []string
 		prodCtx   []string
 	)
-	fs.Func("ignore-path", "directory whose file writes are expected background activity, never covert (repeatable)", func(v string) error {
+	fs.Func("ignore-path", "absolute directory whose file writes are expected background activity, never covert (repeatable)", func(v string) error {
+		if !strings.HasPrefix(v, "/") {
+			return fmt.Errorf("%q is not absolute (effect paths are absolute; expand ~ first)", v)
+		}
 		ignore = append(ignore, v)
 		return nil
 	})

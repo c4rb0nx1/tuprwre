@@ -95,6 +95,9 @@ func TestParseFlagsRulesAndPrecision(t *testing.T) {
 	if len(defaults.rules.ProtectedBranches) != len(rules.DefaultConfig.ProtectedBranches) {
 		t.Errorf("default branches = %v", defaults.rules.ProtectedBranches)
 	}
+	if _, err := parseFlags([]string{"--ignore-path", "~/.cache", "x"}, &bytes.Buffer{}); err == nil {
+		t.Error("relative ignore path accepted")
+	}
 	if _, err := parseFlags([]string{"--taint-window", "-1s", "x"}, &bytes.Buffer{}); err == nil {
 		t.Error("negative taint window accepted")
 	}
