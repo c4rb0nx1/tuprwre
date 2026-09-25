@@ -48,6 +48,7 @@ func TestSessionGolden(t *testing.T) {
 
 	var got bytes.Buffer
 	enc := json.NewEncoder(&got)
+	enc.SetEscapeHTML(false) // as gateway.FileSink writes it
 	for _, e := range events {
 		if err := enc.Encode(e); err != nil {
 			t.Fatal(err)

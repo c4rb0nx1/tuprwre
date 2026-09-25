@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,5 +68,35 @@ func TestFileSinkWritesJSONL(t *testing.T) {
 	}
 	if lines != 3 {
 		t.Fatalf("lines = %d, want 3", lines)
+	}
+}
+
+// TestFileSinkKeepsHTMLCharactersLiteral proves recorded commands and
+// payloads are written as-is, not as </>/& escapes, including
+// after redaction re-encodes a payload.
+func TestFileSinkKeepsHTMLCharactersLiteral(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	sink, err := NewFileSink(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := event.New(event.SourceGateway, event.KindToolCallIntent, time.Now())
+	e.Arguments = json.RawMessage(`{"command":"make <all> && echo done","token":"fake-tok-12345678"}`)
+	e = DefaultRedactor(e)
+	if err := sink.Emit(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `make <all> && echo done`) || strings.Contains(string(raw), "\\u00") {
+		t.Errorf("log = %s", raw)
+	}
+	if !e.Redacted {
+		t.Error("payload was not redacted")
 	}
 }

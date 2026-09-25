@@ -57,7 +57,10 @@ func NewFileSink(path string) (*FileSink, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileSink{f: f, enc: json.NewEncoder(f)}, nil
+	enc := json.NewEncoder(f)
+	// Keep <, > and & literal so recorded commands read as written.
+	enc.SetEscapeHTML(false)
+	return &FileSink{f: f, enc: enc}, nil
 }
 
 // Emit encodes e as a single JSON line.

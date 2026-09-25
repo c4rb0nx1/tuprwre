@@ -8,6 +8,7 @@
 package event
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -187,17 +188,32 @@ type Exit struct {
 // for tool_call_intent events, so it is emitted only then; for every other
 // Kind it is omitted, matching the package rule that fields not applicable to
 // a Kind are absent.
+//
+// HTML characters (<, >, &) are not escaped, so recorded commands and payloads
+// read as written. An encoder with SetEscapeHTML(false) preserves this; plain
+// json.Marshal of an Event re-escapes them, which is equivalent JSON.
 func (e Event) MarshalJSON() ([]byte, error) {
 	// eventJSON is the plain field set; it still carries the "complete" field,
 	// which the non-intent wrapper shadows with a never-set, omitted pointer.
 	type eventJSON Event
 	if e.Kind == KindToolCallIntent {
-		return json.Marshal(eventJSON(e))
+		return MarshalNoEscape(eventJSON(e))
 	}
-	return json.Marshal(struct {
+	return MarshalNoEscape(struct {
 		eventJSON
 		Complete *struct{} `json:"complete,omitempty"`
 	}{eventJSON: eventJSON(e)})
+}
+
+// MarshalNoEscape is json.Marshal without HTML escaping.
+func MarshalNoEscape(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // New builds an event with the current schema version, a fresh random ID and

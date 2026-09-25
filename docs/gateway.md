@@ -132,10 +132,11 @@ generic `password`/`secret`/`token`/`api_key` assignments. Matches become
 
 **Redaction is best-effort, not a guarantee.** It is pattern-based and will miss
 secrets that do not match a known shape (arbitrary tokens, novel providers,
-values split across JSON fields). Treat the log as sensitive regardless. Residual
-notes: values redacted by regex are re-marshalled with `encoding/json`, which
-HTML-escapes `<`, `>`, and `&` across the recorded payload; large integers are
-preserved via `json.Number`. Use `--no-redact` only with throwaway credentials. The same default redactor
+values split across JSON fields). Treat the log as sensitive regardless. A
+redacted payload is re-encoded: its whitespace and key order may change, large
+integers are preserved via `json.Number`, and `<`, `>` and `&` stay literal (the
+log never HTML-escapes them). Use `--no-redact` only with throwaway
+credentials. The same default redactor
 also covers effect-event argv recorded by `tprsh-sensor` (see
 [`sensor.md`](sensor.md#redaction)).
 

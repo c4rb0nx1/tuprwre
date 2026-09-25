@@ -164,7 +164,7 @@ func redactJSON(raw json.RawMessage) (json.RawMessage, int) {
 	if n == 0 {
 		return raw, 0
 	}
-	out, err := json.Marshal(v)
+	out, err := event.MarshalNoEscape(v)
 	if err != nil {
 		return raw, 0
 	}
